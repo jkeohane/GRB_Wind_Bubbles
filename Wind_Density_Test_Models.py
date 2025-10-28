@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from VegasAfterglow import ISM, Wind, TophatJet, Observer, Radiation, Model
 import os
+
 #make directory if needed
 os.makedirs("assets", exist_ok=True)
 
@@ -18,11 +19,12 @@ rad = Radiation(eps_e=1e-1, eps_B=1e-3, p=2.3)
 
 ## Now make a list of models with different ISM densities
 
-n_isms = np.array([1,10,100,1000,1E4,1E5]) # atoms/cc
-
+#A_stars = np.array([1,10,100,1000,1E4,1E5]) # atoms/cc
+A_stars = np.array([1,10,100,1000,1E4,1E5]) # atoms/cc
+n_ism = 1 # atoms/cc
 mediums = []
-for n_ism in n_isms:
-    mediums.append(Wind(A_star=1.0,n_ism=n_ism) )
+for A_star in A_stars:
+    mediums.append(Wind(A_star=A_star,n_ism=n_ism) )
 
 models = []
 for medium in mediums:
@@ -44,20 +46,20 @@ results = []
 for i, model in enumerate(models):
     results.append( model.flux_density_grid(times, bands) ) # cgs units
 
-# print(len(mediums)) ; print(len(n_isms));print(len(models)) ; print(len(results))
+# print(len(mediums)) ; print(len(A_stars));print(len(models)) ; print(len(results))
 # 4. Visualize the multi-wavelength light curves
 
 
 # 5. Plot each frequency band as a different plot
 for j, band_name in enumerate(band_names):
     plt.figure(figsize=(4.8, 3.6), dpi=200)
-    for i, n_ism in enumerate(n_isms):
-        exp = int(np.floor(np.log10(n_ism)))
-        base = n_ism / 10 ** exp
+    for i, A_star in enumerate(A_stars):
+        exp = int(np.floor(np.log10(A_star)))
+        base =A_star / 10 ** exp
         if base == 1.0:
-           label = fr'$10^{{{exp}}}\,\mathrm{{cm}}^{{-3}}$'
+           label = fr'$A* = 10^{{{exp}}}$'
         else:
-            label = fr'${base:.1f} \times 10^{{{exp}}}\,\mathrm{{cm}}^{{-3}}$'
+            label = fr'$A* = {base:.1f} \times 10^{{{exp}}}$'
         plt.loglog(times_days, results[i].total[j,:]*1E23, label=label)
 
     plt.xlabel('Time (days)')
@@ -84,18 +86,18 @@ for i, model in enumerate(models):
     results.append( model.flux_density_grid(epochs, frequencies) )
  # 4. Plot broadband spectra at each density
     plt.figure(figsize=(4.8, 3.6),dpi=200)
-    colors = plt.cm.viridis(np.linspace(0,1,len(n_isms)))
+    colors = plt.cm.viridis(np.linspace(0,1,len(A_stars)))
 
 for j, epoch in enumerate(epochs):
 
-    for i, n_ism in enumerate(n_isms):
+    for i, n_ism in enumerate(A_stars):
          ### to make the labels
-        exp = int(np.floor(np.log10(n_ism)))
-        base = n_ism / 10 ** exp
+        exp = int(np.floor(np.log10(A_star)))
+        base = A_star / 10 ** exp
         if base == 1.0:
-           label = fr'$10^{{{exp}}}\,\mathrm{{cm}}^{{-3}}$'
+           label = fr'$A* = 10^{{{exp}}}$'
         else:
-            label = fr'${base:.1f} \times 10^{{{exp}}}\,\mathrm{{cm}}^{{-3}}$'
+            label = fr'$A* = {base:.1f} \times 10^{{{exp}}}$'
 
         plt.loglog(frequencies, results[i].total[:,j]*1E23, color=colors[i], label=label)
 
