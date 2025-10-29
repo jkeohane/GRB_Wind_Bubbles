@@ -2,7 +2,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from VegasAfterglow import TophatJet, Observer, Radiation, Model, Medium
-import os
+from os import makedirs
+# make output folder
+makedirs("assets", exist_ok=True)
 
 # ---- constants (cgs) ----
 pi   = 3.141592653589793
@@ -19,46 +21,29 @@ v_w   = 1e8                     # cm/s  (≈ 1000 km/s; use 2e8 for 2000 km/s if
 n_ism = 100                    # cm^-3  (you vary P_ism below; n_ism fixes rho_ism)
 rho_ism = n_ism * mp
 f_sh  = 0.05                    # fractional shell thickness (ΔR = f_sh * R_b or here: f_sh * R_t as your code assumed)
+T_ism = 1E5 / n_ism # in Kelvin assuming a constant ambient pressure
+P_ism = n_ism * T_ism * kb
 
 # helpful constant for free wind region
 A_star = M_dot / (4.0 * pi * v_w)  # g/cm
+# Termination shock Radius in cgs:
+R_t = (M_dot * v_w / (4.0 * pi * P_ism))**0.5
+    # Assumed thickness -- just a guess
+dR = f_sh * R_t
+# robust column idea (normally uses R_b, but if you place shell at R_t, keep it consistent)
+# N_sh ≈ (1/3) * rho_ism * R_t  ->  rho_shell ≈ N_sh / dR
 
-# make output folder
-os.makedirs("assets", exist_ok=True)
-
-# --- build a *new* density function for each model ---
-def make_density_callable(P_ism, use_shell=True):
-    """
-    Return a rho(phi, theta, r) function (g/cm^3) that encodes this model's R_t and shell density.
-    Late-time, pressure-confined simplification:
-      - free wind for r < R_t
-      - thin 'shell' of thickness dR just outside R_t (your original placement),
-        with density set to produce a robust column
-      - ambient ISM beyond
-    """
-    global A_star, v_w, rho_ism, R_t, dR
-    # Correct termination shock:
-    R_t = (M_dot * v_w / (4.0 * pi * P_ism))**0.5
-
-    # If you want the shell *at R_t* (as your code did):
-    dR = f_sh * R_t
-    # robust column idea (normally uses R_b, but if you place shell at R_t, keep it consistent)
-    # N_sh ≈ (1/3) * rho_ism * R_t  ->  rho_shell ≈ N_sh / dR
-    # This just gives you a geometrically thin, denser zone.
-    if use_shell:
-        rho_shell = ( (1.0/3.0) * rho_ism * R_t ) / dR
+def density(phi, theta, r):
+    # Expecting scalar r; if VA passes arrays later, you can vectorize easily
+    global A_star, rho_ism, R_t, dR
+    # This gives us a geometrically thin, denser zone.
+    rho_shell = ((1.0 / 3.0) * rho_ism * R_t) / dR
+    if r < R_t:
+        return A_star * r**-2
+    elif r < R_t + dR:
+        return rho_shell
     else:
-        rho_shell = rho_ism  # no special shell
-
-    def density(phi, theta, r):
-        # Expecting scalar r; if VA passes arrays later, you can vectorize easily
-        if r < R_t:
-            return A_star * r**-2
-        elif r < R_t + dR and use_shell:
-            return rho_shell
-        else:
-            return rho_ism
-    return density
+        return rho_ism
 
 # ---- jet, observer, radiation ----
 jet = TophatJet(theta_c=0.1, E_iso=1e52, Gamma0=300)
@@ -72,21 +57,35 @@ bands = np.array([1e9, 1e14, 1e17])     # Hz
 band_names = ["Radio", "Optical", "X-ray"]
 
 # ---- sweep in ambient pressure (K cm^-3 * k_B) ----
-P_isms = (10.0**np.arange(4, 6)) * kb   # 1e2 .. 1e9 K cm^-3 * k_B
+P_isms = (10.0**np.arange(4, 8)) * kb   # 1e2 .. 1e9 K cm^-3 * k_B
+
+# ---- sweep in ambient density (cm^-3) ----
+n_isms = (10.0**np.arange(0, 2))
 
 # Radius grid: 10^15–10^20 cm (~0.003–100 pc)
-r = np.logspace(16, 22, 600)
+r = np.logspace(16, 20, 600)
 results = []
 rho_profiles = []
 R_ts = []
-for P_ in P_isms:
-    rho_fn = make_density_callable(P_)
-    print(R_t)
-    R_ts.append(R_t)
-    medium = Medium(rho=rho_fn)
-    model = Model(jet=jet, medium=medium, observer=obs, fwd_rad=rad)
-    results.append(model.flux_density_grid(times, bands))
-    rho_profiles.append(np.array([rho_fn(0, 0, ri) for ri in r]))
+for P_ism in P_isms:
+    for n_ism in n_isms:
+        ## First define the global variables
+        #  A_star, rho_ism, R_t, dR
+        rho_ism = n_ism * mp
+        # helpful constant for free wind region
+        A_star = M_dot / (4.0 * pi * v_w)  # g/cm
+        # Termination shock Radius in cgs:
+        R_t = (M_dot * v_w / (4.0 * pi * P_ism)) ** 0.5
+        # Assumed thickness -- just a guess
+        dR = f_sh * R_t
+        R_t = (M_dot * v_w / (4.0 * pi * P_ism)) ** 0.5
+        R_ts.append(R_t)
+        # Assumed thickness -- just a guess
+        dR = f_sh * R_t
+        medium = Medium(rho=density)
+        model = Model(jet=jet, medium=medium, observer=obs, fwd_rad=rad)
+        results.append(model.flux_density_grid(times, bands))
+        rho_profiles.append(np.array([density(0, 0, ri) for ri in r]))
 
 
 
@@ -96,47 +95,39 @@ colors = plt.cm.viridis(np.linspace(0, 1, len(P_isms)))  # same colormap for con
 
 for i, rho_profile in enumerate(rho_profiles):
     n = rho_profile / mp
-    P_ = P_isms[i]
-    exp = int(np.floor(np.log10(P_ / kb)))
-    base = (P_ / kb) / 10 ** exp
-    if np.isclose(base, 1.0):
-        label = fr'$10^{{{exp}}}\,\mathrm{{K\,cm}}^{{-3}}$'
-    else:
-        label = fr'${base:.1f}\!\times\!10^{{{exp}}}\,\mathrm{{K\,cm}}^{{-3}}$'
-
-    plt.loglog(r / 3.086e18, n, color=colors[i], lw=1.3, label=label)
+    plt.loglog(r / 3.086e18, n, color=f'C{i}', lw=1.3)
     plt.axvline(R_ts[i]/ 3.086e18, ls='--', color=f'C{i}')
-
-
 
 plt.xlabel('Radius (pc)')
 plt.ylabel(r'n(r) [cm$^{-3}$]')
 plt.title('Late-time WR Bubble Density Profiles')
-plt.legend(ncol=2, fontsize=7)
+#plt.legend(ncol=2, fontsize=7)
 plt.tight_layout()
 plt.show()
 
 # ---- plotting ----
 for j, band_name in enumerate(band_names):
     plt.figure(figsize=(4.8, 3.6), dpi=200)
-    for i, P_ in enumerate(P_isms):
+    i = 0
+    for P_ in (P_isms):
         exp = int(np.floor(np.log10(P_ / kb)))
         base = (P_ / kb) / 10 ** exp
         if np.isclose(base, 1.0):
             label = fr'$10^{{{exp}}}\,\mathrm{{K\,cm}}^{{-3}}$'
         else:
             label = fr'${base:.1f}\times10^{{{exp}}}\,\mathrm{{K\,cm}}^{{-3}}$'
-        plt.loglog(times_days, results[i].total[j, :] * 1e23, label=label)
+
+        for n_ism in n_isms:
+            plt.loglog(times_days, results[i].total[j, :] * 1e23, label=label)
+            i = i + 1
 
     plt.xlabel('Time (days)')
     plt.ylabel('Flux Density (Jy)')
-    plt.legend(ncol=2, fontsize=7)
+    #plt.legend(ncol=2, fontsize=7)
     plt.title('Wind Bubble ' + band_name + ' Light Curves')
     plt.tight_layout()
     plt.savefig(f'assets/{band_name}-lc.png', dpi=300)
     plt.show()
-
-
 
 quit()
 

@@ -21,7 +21,7 @@ f_sh = 0.05 ## fraction of bubble size of the shell.
 
 ## The termination shock radius
 rho_ism = n_ism*mp
-R_t =(M_dot * v_w /(4*pi*P_ism ))**2
+R_t =(M_dot * v_w /(4*pi*P_ism ))**0.5
 dR = f_sh*R_t
 A_star = M_dot/(4*pi*v_w)
 
@@ -59,21 +59,36 @@ times = np.logspace(2, 8, 200)
 times_days = times/86400
 
 # 2. Define observing frequencies (radio, optical, X-ray bands in Hz)
-bands = np.array([1e9, 1e14, 1e17])
+bands = np.array([1e14])
 
-band_names = ["Radio", "Optical", "X-ray"]
+band_names = ["Optical"]
 
 n_isms = np.array([1,10,100,1000,1E4]) # atoms/cc
 
 results = []
 for n_ism in n_isms:
+    # The termination shock radius
     rho_ism = n_ism * mp
+    R_t = (M_dot * v_w / (4 * pi * P_ism)) ** 0.5
+    dR = f_sh * R_t
+    A_star = M_dot / (4 * pi * v_w)
+
     medium = Medium(rho=density)
     model = ( Model(jet=jet, medium=medium, observer=obs, fwd_rad=rad) )
     results.append( model.flux_density_grid(times, bands) ) # cgs units
 
 # print(len(mediums)) ; print(len(n_isms));print(len(models)) ; print(len(results))
-# 4. Visualize the multi-wavelength light curves
+# 4. Plot
+
+
+
+
+
+
+
+
+
+
 
 
 # 5. Plot each frequency band as a different plot
