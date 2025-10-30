@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="cdfce15e-cd3c-4478-a8a7-bd963d7a8cb7" name="Changes" comment="">
+      <change afterPath="$PROJECT_DIR$/.idea/GRB_Wind_Bubbles.iml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/Variable_k_model.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/.gitignore" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/.name" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/VegasAfterglow.iml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/modules.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Wind_Bubble_Model.py" beforeDir="false" afterPath="$PROJECT_DIR$/Wind_Bubble_Model.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM2-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM2-spec.png" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM3-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM3-spec.png" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM4-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM4-spec.png" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM5-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM5-spec.png" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM6-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM6-spec.png" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM7-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM7-spec.png" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM8-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM8-spec.png" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM_Optical-lc.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM_Optical-lc.png" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM_Radio-lc.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM_Radio-lc.png" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM_X-ray-lc.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM_X-ray-lc.png" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
+  "lastFilter": {
+    "state": "OPEN",
+    "assignee": "jkeohane"
+  }
+}]]></component>
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "https://github.com/jkeohane/GRB_Wind_Bubbles.git",
+    "accountId": "2f5f5fda-bbea-48d7-8b34-d94bd55f8a87"
+  }
+}]]></component>
+  <component name="ProjectColorInfo"><![CDATA[{
+  "associatedIndex": 2
+}]]></component>
+  <component name="ProjectId" id="34nW8tAFkdY4XnQEqyCsMM8ejPD" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "Python.Variable_k_model.executor": "Run",
+    "Python.Wind_Bubble_Model.executor": "Run",
+    "Python.Wind_Density_Test_Models.executor": "Run",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "SHARE_PROJECT_CONFIGURATION_FILES": "true",
+    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultAutoModeForALLUsers.v1": "true",
+    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
+    "git-widget-placeholder": "master",
+    "junie.onboarding.icon.badge.shown": "true",
+    "last_opened_file_path": "/Users/jkeohane/GRBs/GRB_Wind_Bubbles",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "to.speed.mode.migration.done": "true",
+    "vue.rearranger.settings.migration": "true"
+  }
+}]]></component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$" />
+    </key>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-js-predefined-d6986cc7102b-3aa1da707db6-JavaScript-PY-252.27397.106" />
+        <option value="bundled-python-sdk-4e2b1448bda8-9a97661f3031-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-252.27397.106" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="cdfce15e-cd3c-4478-a8a7-bd963d7a8cb7" name="Changes" comment="" />
+      <created>1761849659670</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1761849659670</updated>
+      <workItem from="1761849660741" duration="3032000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="com.intellij.coverage.CoverageDataManagerImpl">
+    <SUITE FILE_PATH="coverage/GRB_Wind_Bubbles$Wind_Density_Test_Models.coverage" NAME="Wind_Density_Test_Models Coverage Results" MODIFIED="1761852153138" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/GRB_Wind_Bubbles$Variable_k_model.coverage" NAME="Variable_k_model Coverage Results" MODIFIED="1761852537867" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/GRB_Wind_Bubbles$Wind_Bubble_Model.coverage" NAME="Wind_Bubble_Model Coverage Results" MODIFIED="1761851178235" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+  </component>
+</project>

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import numpy as np
 import matplotlib.pyplot as plt
-from VegasAfterglow import TophatJet, Observer, Radiation, Model, Medium
+from VegasAfterglow import TophatJet, Observer, Radiation, Model, Medium, Wind
 from os import makedirs
 
 # ---------- setup ----------
@@ -16,89 +16,27 @@ Msun = 1.98847e33
 pc_to_cm = 3.086e18
 
 # ---------- two-stage (slow → WR) density ----------
-def make_two_stage_density(
-    # WR (inner, fast)
-    Mdot_WR = 6e-6 * Msun / year,   # g/s  (≈ 6e-6 Msun/yr)
-    v_WR    = 2e8,                  # cm/s (≈ 2000 km/s)
-    t_WR    = 1e4 * year,           # s    (10^4 yr)
-
-    # Slow phase (LBV/RSG)
-    Mdot_slow = 3e-5 * Msun / year, # g/s  (≈ 3e-5 Msun/yr)
-    v_slow    = 2.5e6,              # cm/s (≈ 25 km/s → RSG; use 1e7 for LBV 100 km/s)
-    t_slow    = 5e4 * year,         # s    (5×10^4 yr laid down pre-WR)
-
-    # ISM
-    n_ism   = 1.0,                  # cm^-3
-    rho_ism = None,                 # g/cm^3; if None, set to n_ism*mp
-
-    # shell placement & mass loading
-    shell_mode    = "kinematic",    # "kinematic" or "fractional"
-    frac_Rsh      = 0.5,            # if "fractional": R_sh = frac_Rsh * R_slow
-    f_sweep       = 0.7,            # fraction of slow-wind mass (inside R_sh) swept into shell
-    rel_thickness = 0.03            # ΔR / R_sh (geometrically thin)
+def make_variable_k_density(
+    A=1.5E11,   # g/s  if k=2
+    k=2    # wind structure
 ):
     """
     Returns: rho(phi,theta,r) [g/cm^3], meta dict
     Inner WR wind, thin swept shell at R_sh, slow wind out to R_slow, ISM beyond.
     """
-    if rho_ism is None:
-        rho_ism = n_ism * mp
-
-    # A-parameters (g cm^-1)
-    A_WR   = Mdot_WR   / (4.0 * pi * v_WR)
-    A_slow = Mdot_slow / (4.0 * pi * v_slow)
-
-    # slow wind extent (laid down before WR)
-    R_slow = max(1e15, v_slow * t_slow)
-
-    # shell radius
-    if shell_mode.lower().startswith("kin"):
-        R_sh = max(1e15, min(R_slow, v_slow * t_WR))
-    else:
-        R_sh = max(1e15, min(R_slow, frac_Rsh * R_slow))
-
-    # shell thickness
-    dR = max(1e-3 * R_sh, rel_thickness * R_sh)
-
-    # mass of slow wind interior to R_sh (for ρ∝r^-2: M(<R)=(Mdot/v)*R)
-    M_slow_in = (Mdot_slow / v_slow) * R_sh
-    M_shell   = f_sweep * M_slow_in
-
-    # uniform shell density (mass / volume of thin spherical shell)
-    rho_shell = M_shell / (4.0 * pi * R_sh**2 * dR)
-
-    # region boundaries
-    R1 = R_sh        # WR wind → shell inner
-    R2 = R_sh + dR   # shell outer
-    R3 = R_slow      # slow wind outer
 
     def rho(phi, theta, r):
-        # free WR wind
-        if r < R1:
-            return A_WR / (r**2)
-        # thin shell
-        if r < R2:
-            return rho_shell
-        # slow wind zone
-        if r < R3:
-            return A_slow / (r**2)
-        # ambient ISM
-        return rho_ism
-
-    meta = {"R_sh": R_sh, "dR": dR, "R_slow": R_slow,
-            "rho_shell": rho_shell, "A_WR": A_WR, "A_slow": A_slow,
-            "n_ism": n_ism, "rho_ism": rho_ism}
+        return A*r**(-k)
+    meta = {"A": A, "k": k}
     return rho, meta
 
 # build one medium (tweak parameters here as desired)
-rho_fn, meta = make_two_stage_density(
-    # choose LBV or RSG character by v_slow; other knobs above
-    v_slow=2.5e6,        # 25 km/s (RSG-like)
-    n_ism=1.0,           # cm^-3
-    f_sweep=0.7,
-    rel_thickness=0.03
+rho_fn, meta = make_variable_k_density(
+    A=1.5E11,
+    k=2
 )
 medium = Medium(rho=rho_fn)
+medium = Wind(A_star=1)  ###  Testing to see if output is same
 
 # ---------- model (jet/observer/radiation) ----------
 jet = TophatJet(theta_c=0.1, E_iso=1e52, Gamma0=300)
@@ -108,7 +46,6 @@ model = Model(jet=jet, medium=medium, observer=obs, fwd_rad=rad)
 
 # ---------- density profile plot with twin axes ----------
 r = np.logspace(16, 20, 600)                     # cm
-#rho_profile = np.array([rho_fn(0, 0, ri) for ri in r])
 rho_profile = model.medium(0,0,r)
 n_profile   = rho_profile / mp
 
