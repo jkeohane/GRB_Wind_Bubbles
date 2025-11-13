@@ -4,79 +4,66 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="cdfce15e-cd3c-4478-a8a7-bd963d7a8cb7" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/GRB_Wind_Bubbles.iml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/Variable_k_model.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/.gitignore" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/.name" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/VegasAfterglow.iml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/modules.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Wind_Bubble_Model.py" beforeDir="false" afterPath="$PROJECT_DIR$/Wind_Bubble_Model.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM2-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM2-spec.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM3-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM3-spec.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM4-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM4-spec.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM5-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM5-spec.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM6-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM6-spec.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM7-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM7-spec.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM8-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM8-spec.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM_Optical-lc.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM_Optical-lc.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM_Radio-lc.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM_Radio-lc.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM_X-ray-lc.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM_X-ray-lc.png" afterDir="false" />
-    </list>
+    <list default="true" id="cdfce15e-cd3c-4478-a8a7-bd963d7a8cb7" name="Changes" comment="After working at Morehead on the laptop Thursday 10/30/25" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
+  <component name="Git.Pull.Settings">
+    <option name="OPTIONS">
+      <set>
+        <option value="NO_VERIFY" />
+      </set>
+    </option>
+  </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
-  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
-  "lastFilter": {
-    "state": "OPEN",
-    "assignee": "jkeohane"
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;jkeohane&quot;
   }
-}]]></component>
-  <component name="GithubPullRequestsUISettings"><![CDATA[{
-  "selectedUrlAndAccountId": {
-    "url": "https://github.com/jkeohane/GRB_Wind_Bubbles.git",
-    "accountId": "2f5f5fda-bbea-48d7-8b34-d94bd55f8a87"
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/jkeohane/GRB_Wind_Bubbles.git&quot;,
+    &quot;accountId&quot;: &quot;2f5f5fda-bbea-48d7-8b34-d94bd55f8a87&quot;
   }
-}]]></component>
-  <component name="ProjectColorInfo"><![CDATA[{
-  "associatedIndex": 2
-}]]></component>
+}</component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 2
+}</component>
   <component name="ProjectId" id="34nW8tAFkdY4XnQEqyCsMM8ejPD" />
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "Python.Variable_k_model.executor": "Run",
-    "Python.Wind_Bubble_Model.executor": "Run",
-    "Python.Wind_Density_Test_Models.executor": "Run",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "SHARE_PROJECT_CONFIGURATION_FILES": "true",
-    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultAutoModeForALLUsers.v1": "true",
-    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
-    "git-widget-placeholder": "master",
-    "junie.onboarding.icon.badge.shown": "true",
-    "last_opened_file_path": "/Users/jkeohane/GRBs/GRB_Wind_Bubbles",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "to.speed.mode.migration.done": "true",
-    "vue.rearranger.settings.migration": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;Python.Variable_k_model.executor&quot;: &quot;Run&quot;,
+    &quot;Python.Wind_Bubble_Model.executor&quot;: &quot;Run&quot;,
+    &quot;Python.Wind_Density_Test_Models.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultAutoModeForALLUsers.v1&quot;: &quot;true&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;master&quot;,
+    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/Users/jkeohane/GRBs/GRB_Wind_Bubbles&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$" />

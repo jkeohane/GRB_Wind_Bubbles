@@ -1,0 +1,435 @@
+Index: Wind_Bubble_Model.py
+===================================================================
+diff --git a/Wind_Bubble_Model.py b/Wind_Bubble_Model.py
+deleted file mode 100644
+--- a/Wind_Bubble_Model.py	(revision 18e03affcc646d01f9a117456a29022711b1f802)
++++ /dev/null	(revision 18e03affcc646d01f9a117456a29022711b1f802)
+@@ -1,222 +0,0 @@
+-# -*- coding: utf-8 -*-
+-import numpy as np
+-import matplotlib.pyplot as plt
+-from VegasAfterglow import TophatJet, Observer, Radiation, Model, Medium
+-from os import makedirs
+-
+-# ---------- setup ----------
+-makedirs("assets", exist_ok=True)
+-
+-# constants (cgs)
+-pi   = np.pi
+-mp   = 1.67262192369e-24
+-kb   = 1.3806488e-16
+-year = 3.15576e7
+-Msun = 1.98847e33
+-pc_to_cm = 3.086e18
+-
+-# ---------- two-stage (slow → WR) density ----------
+-def make_two_stage_density(
+-    # WR (inner, fast)
+-    Mdot_WR = 6e-6 * Msun / year,   # g/s  (≈ 6e-6 Msun/yr)
+-    v_WR    = 2e8,                  # cm/s (≈ 2000 km/s)
+-    t_WR    = 1e4 * year,           # s    (10^4 yr)
+-
+-    # Slow phase (LBV/RSG)
+-    Mdot_slow = 3e-5 * Msun / year, # g/s  (≈ 3e-5 Msun/yr)
+-    v_slow    = 2.5e6,              # cm/s (≈ 25 km/s → RSG; use 1e7 for LBV 100 km/s)
+-    t_slow    = 5e4 * year,         # s    (5×10^4 yr laid down pre-WR)
+-
+-    # ISM
+-    n_ism   = 1.0,                  # cm^-3
+-    rho_ism = None,                 # g/cm^3; if None, set to n_ism*mp
+-
+-    # shell placement & mass loading
+-    shell_mode    = "kinematic",    # "kinematic" or "fractional"
+-    frac_Rsh      = 0.5,            # if "fractional": R_sh = frac_Rsh * R_slow
+-    f_sweep       = 0.7,            # fraction of slow-wind mass (inside R_sh) swept into shell
+-    rel_thickness = 0.03            # ΔR / R_sh (geometrically thin)
+-):
+-    """
+-    Returns: rho(phi,theta,r) [g/cm^3], meta dict
+-    Inner WR wind, thin swept shell at R_sh, slow wind out to R_slow, ISM beyond.
+-    """
+-    if rho_ism is None:
+-        rho_ism = n_ism * mp
+-
+-    # A-parameters (g cm^-1)
+-    A_WR   = Mdot_WR   / (4.0 * pi * v_WR)
+-    A_slow = Mdot_slow / (4.0 * pi * v_slow)
+-
+-    # slow wind extent (laid down before WR)
+-    R_slow = max(1e15, v_slow * t_slow)
+-
+-    # shell radius
+-    if shell_mode.lower().startswith("kin"):
+-        R_sh = max(1e15, min(R_slow, v_slow * t_WR))
+-    else:
+-        R_sh = max(1e15, min(R_slow, frac_Rsh * R_slow))
+-
+-    # shell thickness
+-    dR = max(1e-3 * R_sh, rel_thickness * R_sh)
+-
+-    # mass of slow wind interior to R_sh (for ρ∝r^-2: M(<R)=(Mdot/v)*R)
+-    M_slow_in = (Mdot_slow / v_slow) * R_sh
+-    M_shell   = f_sweep * M_slow_in
+-
+-    # uniform shell density (mass / volume of thin spherical shell)
+-    rho_shell = M_shell / (4.0 * pi * R_sh**2 * dR)
+-
+-    # region boundaries
+-    R1 = R_sh        # WR wind → shell inner
+-    R2 = R_sh + dR   # shell outer
+-    R3 = R_slow      # slow wind outer
+-
+-    def rho(phi, theta, r):
+-        # free WR wind
+-        if r < R1:
+-            return A_WR / (r**2)
+-        # thin shell
+-        if r < R2:
+-            return rho_shell
+-        # slow wind zone
+-        if r < R3:
+-            return A_slow / (r**2)
+-        # ambient ISM
+-        return rho_ism
+-
+-    meta = {"R_sh": R_sh, "dR": dR, "R_slow": R_slow,
+-            "rho_shell": rho_shell, "A_WR": A_WR, "A_slow": A_slow,
+-            "n_ism": n_ism, "rho_ism": rho_ism}
+-    return rho, meta
+-
+-# build one medium (tweak parameters here as desired)
+-rho_fn, meta = make_two_stage_density(
+-    # choose LBV or RSG character by v_slow; other knobs above
+-    v_slow=2.5e6,        # 25 km/s (RSG-like)
+-    n_ism=1.0,           # cm^-3
+-    f_sweep=0.7,
+-    rel_thickness=0.03
+-)
+-medium = Medium(rho=rho_fn)
+-
+-# ---------- model (jet/observer/radiation) ----------
+-jet = TophatJet(theta_c=0.1, E_iso=1e52, Gamma0=300)
+-obs = Observer(lumi_dist=1e26, z=0.1, theta_obs=0)
+-rad = Radiation(eps_e=1e-1, eps_B=1e-3, p=2.3)
+-model = Model(jet=jet, medium=medium, observer=obs, fwd_rad=rad)
+-
+-# ---------- density profile plot with twin axes ----------
+-r = np.logspace(16, 20, 600)                     # cm
+-#rho_profile = np.array([rho_fn(0, 0, ri) for ri in r])
+-rho_profile = model.medium(0,0,r)
+-n_profile   = rho_profile / mp
+-
+-fig, ax1 = plt.subplots(figsize=(5, 3.6), dpi=200)
+-ax1.loglog(r / pc_to_cm, n_profile, color='C0', lw=1.5)
+-ax1.set_xlabel('Radius (pc)')
+-ax1.set_ylabel(r'n(r) [cm$^{-3}$]')
+-ax1.set_title('Two-Stage (LBV/RSG → WR) Bubble Density')
+-
+-# top x-axis in cm
+-def pc_to_cm_f(x):  return x * pc_to_cm
+-def cm_to_pc_f(x):  return x / pc_to_cm
+-ax2 = ax1.secondary_xaxis('top', functions=(pc_to_cm_f, cm_to_pc_f))
+-ax2.set_xlabel('Radius (cm)')
+-
+-# right y-axis in ρ
+-def n_to_rho(y):  return y * mp
+-def rho_to_n(y):  return y / mp
+-ax3 = ax1.secondary_yaxis('right', functions=(n_to_rho, rho_to_n))
+-ax3.set_ylabel(r'$\rho(r)$ [g cm$^{-3}$]')
+-
+-plt.tight_layout()
+-plt.savefig("assets/density_profile.png", dpi=300)
+-plt.show()
+-
+-# ---------- light curves (multi-band) ----------
+-# ---------- combined multi-band light curves with dual x- and y-axes ----------
+-times = np.logspace(2, 8, 200)           # seconds
+-times_days = times / 86400.0
+-bands = np.array([1e9, 1e14, 1e17])      # Hz (radio, optical, X-ray)
+-band_names = ["Radio", "Optical", "X-ray"]
+-
+-lc = model.flux_density_grid(times, bands)  # erg cm^-2 s^-1 Hz^-1
+-
+-fig, ax1 = plt.subplots(figsize=(5.8, 3.8), dpi=200)
+-
+-# --- main plot (bottom axis: seconds, flux in Jy) ---
+-for j, (name, nu) in enumerate(zip(band_names, bands)):
+-    exp = int(np.log10(nu))
+-    label = fr'{name} ($10^{{{exp}}}$ Hz)'
+-    ax1.loglog(times, lc.total[j, :] * 1e23,
+-               color=f'C{j}', lw=1.6, label=label)
+-
+-ax1.set_xlabel('Time (s)')
+-ax1.set_ylabel('Flux Density (Jy)')
+-ax1.set_title('Afterglow Light Curves in Multiple Bands')
+-
+-# --- legend (LaTeX formatted) ---
+-ax1.legend(title='Band', ncol=1, fontsize=9, title_fontsize=10)
+-
+-# --- top axis: time in days ---
+-def s_to_days(x):  return x / 86400.0
+-def days_to_s(x):  return x * 86400.0
+-ax2 = ax1.secondary_xaxis('top', functions=(s_to_days, days_to_s))
+-ax2.set_xlabel('Time (days)')
+-
+-# --- right y-axis: flux density in cgs (erg/cm^2/s/Hz) ---
+-def Jy_to_cgs(y):  return y * 1e-23
+-def cgs_to_Jy(y):  return y / 1e-23
+-ax3 = ax1.secondary_yaxis('right', functions=(Jy_to_cgs, cgs_to_Jy))
+-ax3.set_ylabel(r'Flux Density [erg cm$^{-2}$ s$^{-1}$ Hz$^{-1}$]')
+-
+-plt.tight_layout()
+-plt.savefig('assets/lightcurves_all_bands.png', dpi=300)
+-plt.show()
+-
+-# ---------- spectra at selected epochs ----------
+-frequencies = np.logspace(5, 22, 300)    # Hz
+-epochs      = np.array([1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8])  # s
+-epochs_days = epochs / 86400.0
+-
+-spec_grid = model.flux_density_grid(epochs, frequencies)  # shape ~ [len(freq), len(time)]
+-
+-###
+-# ---------- spectra at selected epochs (all on one figure) ----------
+-frequencies = np.logspace(5, 22, 300)    # Hz
+-epochs      = np.array([1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8])  # s
+-epochs_days = epochs / 86400.0
+-
+-# Compute spectral evolution: Fν(ν, t)
+-spec_grid = model.flux_density_grid(epochs, frequencies)  # shape ≈ [len(freq), len(time)]
+-
+-# --- Plot all epochs on one figure ---
+-plt.figure(figsize=(5.5, 3.8), dpi=200)
+-colors = plt.cm.plasma(np.linspace(0, 1, len(epochs)))
+-
+-for j, tsec in enumerate(epochs):
+-    # nice epoch label
+-    exp = int(np.floor(np.log10(tsec)))
+-    base = tsec / 10**exp
+-    if np.isclose(base, 1.0):
+-        label = fr'$10^{{{exp}}}\,\mathrm{{s}}$'
+-    else:
+-        label = fr'${base:.1f}\times10^{{{exp}}}\,\mathrm{{s}}$'
+-
+-    plt.loglog(frequencies, spec_grid.total[:, j] * 1e23,
+-               color=colors[j], lw=1.5, label=label)
+-
+-# Mark radio / optical / X-ray bands
+-for k, nu in enumerate(bands):
+-    plt.axvline(nu, ls='--', color=f'C{k}', alpha=0.6)
+-
+-# Labels and legend
+-plt.xlabel('Frequency (Hz)')
+-plt.ylabel('Flux Density (Jy)')
+-plt.title('Synchrotron Spectra at Multiple Epochs')
+-plt.legend(title='Epoch (s)', ncol=2, fontsize=8, title_fontsize=9, loc='best')
+-
+-plt.tight_layout()
+-plt.savefig('assets/spectra_all_epochs.png', dpi=300)
+-plt.show()
+Index: .idea/workspace.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<project version=\"4\">\n  <component name=\"AutoImportSettings\">\n    <option name=\"autoReloadType\" value=\"SELECTIVE\" />\n  </component>\n  <component name=\"ChangeListManager\">\n    <list default=\"true\" id=\"cdfce15e-cd3c-4478-a8a7-bd963d7a8cb7\" name=\"Changes\" comment=\"\">\n      <change afterPath=\"$PROJECT_DIR$/.idea/GRB_Wind_Bubbles.iml\" afterDir=\"false\" />\n      <change afterPath=\"$PROJECT_DIR$/Variable_k_model.py\" afterDir=\"false\" />\n      <change beforePath=\"$PROJECT_DIR$/.idea/.gitignore\" beforeDir=\"false\" />\n      <change beforePath=\"$PROJECT_DIR$/.idea/.name\" beforeDir=\"false\" />\n      <change beforePath=\"$PROJECT_DIR$/.idea/VegasAfterglow.iml\" beforeDir=\"false\" />\n      <change beforePath=\"$PROJECT_DIR$/.idea/misc.xml\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/.idea/misc.xml\" afterDir=\"false\" />\n      <change beforePath=\"$PROJECT_DIR$/.idea/modules.xml\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/.idea/modules.xml\" afterDir=\"false\" />\n      <change beforePath=\"$PROJECT_DIR$/.idea/vcs.xml\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/.idea/vcs.xml\" afterDir=\"false\" />\n      <change beforePath=\"$PROJECT_DIR$/Wind_Bubble_Model.py\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/Wind_Bubble_Model.py\" afterDir=\"false\" />\n      <change beforePath=\"$PROJECT_DIR$/assets/Wind_ISM2-spec.png\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/assets/Wind_ISM2-spec.png\" afterDir=\"false\" />\n      <change beforePath=\"$PROJECT_DIR$/assets/Wind_ISM3-spec.png\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/assets/Wind_ISM3-spec.png\" afterDir=\"false\" />\n      <change beforePath=\"$PROJECT_DIR$/assets/Wind_ISM4-spec.png\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/assets/Wind_ISM4-spec.png\" afterDir=\"false\" />\n      <change beforePath=\"$PROJECT_DIR$/assets/Wind_ISM5-spec.png\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/assets/Wind_ISM5-spec.png\" afterDir=\"false\" />\n      <change beforePath=\"$PROJECT_DIR$/assets/Wind_ISM6-spec.png\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/assets/Wind_ISM6-spec.png\" afterDir=\"false\" />\n      <change beforePath=\"$PROJECT_DIR$/assets/Wind_ISM7-spec.png\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/assets/Wind_ISM7-spec.png\" afterDir=\"false\" />\n      <change beforePath=\"$PROJECT_DIR$/assets/Wind_ISM8-spec.png\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/assets/Wind_ISM8-spec.png\" afterDir=\"false\" />\n      <change beforePath=\"$PROJECT_DIR$/assets/Wind_ISM_Optical-lc.png\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/assets/Wind_ISM_Optical-lc.png\" afterDir=\"false\" />\n      <change beforePath=\"$PROJECT_DIR$/assets/Wind_ISM_Radio-lc.png\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/assets/Wind_ISM_Radio-lc.png\" afterDir=\"false\" />\n      <change beforePath=\"$PROJECT_DIR$/assets/Wind_ISM_X-ray-lc.png\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/assets/Wind_ISM_X-ray-lc.png\" afterDir=\"false\" />\n    </list>\n    <option name=\"SHOW_DIALOG\" value=\"false\" />\n    <option name=\"HIGHLIGHT_CONFLICTS\" value=\"true\" />\n    <option name=\"HIGHLIGHT_NON_ACTIVE_CHANGELIST\" value=\"false\" />\n    <option name=\"LAST_RESOLUTION\" value=\"IGNORE\" />\n  </component>\n  <component name=\"Git.Settings\">\n    <option name=\"RECENT_GIT_ROOT_PATH\" value=\"$PROJECT_DIR$\" />\n  </component>\n  <component name=\"GitHubPullRequestSearchHistory\"><![CDATA[{\n  \"lastFilter\": {\n    \"state\": \"OPEN\",\n    \"assignee\": \"jkeohane\"\n  }\n}]]></component>\n  <component name=\"GithubPullRequestsUISettings\"><![CDATA[{\n  \"selectedUrlAndAccountId\": {\n    \"url\": \"https://github.com/jkeohane/GRB_Wind_Bubbles.git\",\n    \"accountId\": \"2f5f5fda-bbea-48d7-8b34-d94bd55f8a87\"\n  }\n}]]></component>\n  <component name=\"ProjectColorInfo\"><![CDATA[{\n  \"associatedIndex\": 2\n}]]></component>\n  <component name=\"ProjectId\" id=\"34nW8tAFkdY4XnQEqyCsMM8ejPD\" />\n  <component name=\"ProjectViewState\">\n    <option name=\"hideEmptyMiddlePackages\" value=\"true\" />\n    <option name=\"showLibraryContents\" value=\"true\" />\n  </component>\n  <component name=\"PropertiesComponent\"><![CDATA[{\n  \"keyToString\": {\n    \"ModuleVcsDetector.initialDetectionPerformed\": \"true\",\n    \"Python.Variable_k_model.executor\": \"Run\",\n    \"Python.Wind_Bubble_Model.executor\": \"Run\",\n    \"Python.Wind_Density_Test_Models.executor\": \"Run\",\n    \"RunOnceActivity.ShowReadmeOnStart\": \"true\",\n    \"RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252\": \"true\",\n    \"RunOnceActivity.git.unshallow\": \"true\",\n    \"SHARE_PROJECT_CONFIGURATION_FILES\": \"true\",\n    \"com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultAutoModeForALLUsers.v1\": \"true\",\n    \"com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1\": \"true\",\n    \"git-widget-placeholder\": \"master\",\n    \"junie.onboarding.icon.badge.shown\": \"true\",\n    \"last_opened_file_path\": \"/Users/jkeohane/GRBs/GRB_Wind_Bubbles\",\n    \"node.js.detected.package.eslint\": \"true\",\n    \"node.js.detected.package.tslint\": \"true\",\n    \"node.js.selected.package.eslint\": \"(autodetect)\",\n    \"node.js.selected.package.tslint\": \"(autodetect)\",\n    \"nodejs_package_manager_path\": \"npm\",\n    \"to.speed.mode.migration.done\": \"true\",\n    \"vue.rearranger.settings.migration\": \"true\"\n  }\n}]]></component>\n  <component name=\"RecentsManager\">\n    <key name=\"CopyFile.RECENT_KEYS\">\n      <recent name=\"$PROJECT_DIR$\" />\n    </key>\n  </component>\n  <component name=\"SharedIndexes\">\n    <attachedChunks>\n      <set>\n        <option value=\"bundled-js-predefined-d6986cc7102b-3aa1da707db6-JavaScript-PY-252.27397.106\" />\n        <option value=\"bundled-python-sdk-4e2b1448bda8-9a97661f3031-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-252.27397.106\" />\n      </set>\n    </attachedChunks>\n  </component>\n  <component name=\"TaskManager\">\n    <task active=\"true\" id=\"Default\" summary=\"Default task\">\n      <changelist id=\"cdfce15e-cd3c-4478-a8a7-bd963d7a8cb7\" name=\"Changes\" comment=\"\" />\n      <created>1761849659670</created>\n      <option name=\"number\" value=\"Default\" />\n      <option name=\"presentableId\" value=\"Default\" />\n      <updated>1761849659670</updated>\n      <workItem from=\"1761849660741\" duration=\"3032000\" />\n    </task>\n    <servers />\n  </component>\n  <component name=\"TypeScriptGeneratedFilesManager\">\n    <option name=\"version\" value=\"3\" />\n  </component>\n  <component name=\"com.intellij.coverage.CoverageDataManagerImpl\">\n    <SUITE FILE_PATH=\"coverage/GRB_Wind_Bubbles$Wind_Density_Test_Models.coverage\" NAME=\"Wind_Density_Test_Models Coverage Results\" MODIFIED=\"1761852153138\" SOURCE_PROVIDER=\"com.intellij.coverage.DefaultCoverageFileProvider\" RUNNER=\"coverage.py\" COVERAGE_BY_TEST_ENABLED=\"false\" COVERAGE_TRACING_ENABLED=\"false\" WORKING_DIRECTORY=\"$PROJECT_DIR$\" />\n    <SUITE FILE_PATH=\"coverage/GRB_Wind_Bubbles$Variable_k_model.coverage\" NAME=\"Variable_k_model Coverage Results\" MODIFIED=\"1761852537867\" SOURCE_PROVIDER=\"com.intellij.coverage.DefaultCoverageFileProvider\" RUNNER=\"coverage.py\" COVERAGE_BY_TEST_ENABLED=\"false\" COVERAGE_TRACING_ENABLED=\"false\" WORKING_DIRECTORY=\"$PROJECT_DIR$\" />\n    <SUITE FILE_PATH=\"coverage/GRB_Wind_Bubbles$Wind_Bubble_Model.coverage\" NAME=\"Wind_Bubble_Model Coverage Results\" MODIFIED=\"1761851178235\" SOURCE_PROVIDER=\"com.intellij.coverage.DefaultCoverageFileProvider\" RUNNER=\"coverage.py\" COVERAGE_BY_TEST_ENABLED=\"false\" COVERAGE_TRACING_ENABLED=\"false\" WORKING_DIRECTORY=\"$PROJECT_DIR$\" />\n  </component>\n</project>
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.idea/workspace.xml b/.idea/workspace.xml
+--- a/.idea/workspace.xml	(revision 18e03affcc646d01f9a117456a29022711b1f802)
++++ b/.idea/workspace.xml	(date 1763069301417)
+@@ -4,26 +4,12 @@
+     <option name="autoReloadType" value="SELECTIVE" />
+   </component>
+   <component name="ChangeListManager">
+-    <list default="true" id="cdfce15e-cd3c-4478-a8a7-bd963d7a8cb7" name="Changes" comment="">
+-      <change afterPath="$PROJECT_DIR$/.idea/GRB_Wind_Bubbles.iml" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/Variable_k_model.py" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/.idea/.gitignore" beforeDir="false" />
+-      <change beforePath="$PROJECT_DIR$/.idea/.name" beforeDir="false" />
+-      <change beforePath="$PROJECT_DIR$/.idea/VegasAfterglow.iml" beforeDir="false" />
+-      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/.idea/modules.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/Wind_Bubble_Model.py" beforeDir="false" afterPath="$PROJECT_DIR$/Wind_Bubble_Model.py" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM2-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM2-spec.png" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM3-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM3-spec.png" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM4-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM4-spec.png" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM5-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM5-spec.png" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM6-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM6-spec.png" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM7-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM7-spec.png" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM8-spec.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM8-spec.png" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM_Optical-lc.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM_Optical-lc.png" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM_Radio-lc.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM_Radio-lc.png" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/assets/Wind_ISM_X-ray-lc.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/Wind_ISM_X-ray-lc.png" afterDir="false" />
++    <list default="true" id="cdfce15e-cd3c-4478-a8a7-bd963d7a8cb7" name="Changes" comment="After working at Morehead on the laptop Thursday 10/30/25">
++      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/Wind_Bubble_Model.py" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/assets/density_profile.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/density_profile.png" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/assets/lightcurves_all_bands.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/lightcurves_all_bands.png" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/assets/spectra_all_epochs.png" beforeDir="false" afterPath="$PROJECT_DIR$/assets/spectra_all_epochs.png" afterDir="false" />
+     </list>
+     <option name="SHOW_DIALOG" value="false" />
+     <option name="HIGHLIGHT_CONFLICTS" value="true" />
+@@ -33,54 +19,87 @@
+   <component name="Git.Settings">
+     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+   </component>
+-  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
+-  "lastFilter": {
+-    "state": "OPEN",
+-    "assignee": "jkeohane"
++  <component name="GitHubPullRequestSearchHistory">{
++  &quot;lastFilter&quot;: {
++    &quot;state&quot;: &quot;OPEN&quot;,
++    &quot;assignee&quot;: &quot;jkeohane&quot;
+   }
+-}]]></component>
+-  <component name="GithubPullRequestsUISettings"><![CDATA[{
+-  "selectedUrlAndAccountId": {
+-    "url": "https://github.com/jkeohane/GRB_Wind_Bubbles.git",
+-    "accountId": "2f5f5fda-bbea-48d7-8b34-d94bd55f8a87"
++}</component>
++  <component name="GithubPullRequestsUISettings">{
++  &quot;selectedUrlAndAccountId&quot;: {
++    &quot;url&quot;: &quot;https://github.com/jkeohane/GRB_Wind_Bubbles.git&quot;,
++    &quot;accountId&quot;: &quot;2f5f5fda-bbea-48d7-8b34-d94bd55f8a87&quot;
+   }
+-}]]></component>
+-  <component name="ProjectColorInfo"><![CDATA[{
+-  "associatedIndex": 2
+-}]]></component>
++}</component>
++  <component name="ProjectColorInfo">{
++  &quot;associatedIndex&quot;: 2
++}</component>
+   <component name="ProjectId" id="34nW8tAFkdY4XnQEqyCsMM8ejPD" />
+   <component name="ProjectViewState">
+     <option name="hideEmptyMiddlePackages" value="true" />
+     <option name="showLibraryContents" value="true" />
+   </component>
+-  <component name="PropertiesComponent"><![CDATA[{
+-  "keyToString": {
+-    "ModuleVcsDetector.initialDetectionPerformed": "true",
+-    "Python.Variable_k_model.executor": "Run",
+-    "Python.Wind_Bubble_Model.executor": "Run",
+-    "Python.Wind_Density_Test_Models.executor": "Run",
+-    "RunOnceActivity.ShowReadmeOnStart": "true",
+-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+-    "RunOnceActivity.git.unshallow": "true",
+-    "SHARE_PROJECT_CONFIGURATION_FILES": "true",
+-    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultAutoModeForALLUsers.v1": "true",
+-    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
+-    "git-widget-placeholder": "master",
+-    "junie.onboarding.icon.badge.shown": "true",
+-    "last_opened_file_path": "/Users/jkeohane/GRBs/GRB_Wind_Bubbles",
+-    "node.js.detected.package.eslint": "true",
+-    "node.js.detected.package.tslint": "true",
+-    "node.js.selected.package.eslint": "(autodetect)",
+-    "node.js.selected.package.tslint": "(autodetect)",
+-    "nodejs_package_manager_path": "npm",
+-    "to.speed.mode.migration.done": "true",
+-    "vue.rearranger.settings.migration": "true"
++  <component name="PropertiesComponent">{
++  &quot;keyToString&quot;: {
++    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
++    &quot;Python.Two_Stage_Bubble.executor&quot;: &quot;Run&quot;,
++    &quot;Python.Variable_k_model.executor&quot;: &quot;Run&quot;,
++    &quot;Python.Wind_Bubble_Model-1.executor&quot;: &quot;Run&quot;,
++    &quot;Python.Wind_Bubble_Model.executor&quot;: &quot;Run&quot;,
++    &quot;Python.Wind_Density_Test_Models.executor&quot;: &quot;Run&quot;,
++    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
++    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
++    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
++    &quot;SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,
++    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultAutoModeForALLUsers.v1&quot;: &quot;true&quot;,
++    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
++    &quot;git-widget-placeholder&quot;: &quot;master&quot;,
++    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
++    &quot;last_opened_file_path&quot;: &quot;/Users/jkeohane/GRBs/GRB_Wind_Bubbles&quot;,
++    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
++    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
++    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
++    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
++    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
++    &quot;settings.editor.selected.configurable&quot;: &quot;editing.templates&quot;,
++    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
++    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+   }
+-}]]></component>
++}</component>
+   <component name="RecentsManager">
+     <key name="CopyFile.RECENT_KEYS">
+       <recent name="$PROJECT_DIR$" />
+     </key>
++  </component>
++  <component name="RunManager">
++    <configuration name="Wind_Bubble_Model" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
++      <module name="GRB_Wind_Bubbles" />
++      <option name="ENV_FILES" value="" />
++      <option name="INTERPRETER_OPTIONS" value="" />
++      <option name="PARENT_ENVS" value="true" />
++      <envs>
++        <env name="PYTHONUNBUFFERED" value="1" />
++      </envs>
++      <option name="SDK_HOME" value="" />
++      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/Nov_code" />
++      <option name="IS_MODULE_SDK" value="true" />
++      <option name="ADD_CONTENT_ROOTS" value="true" />
++      <option name="ADD_SOURCE_ROOTS" value="true" />
++      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
++      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/Nov_code/Wind_Bubble_Model.py" />
++      <option name="PARAMETERS" value="" />
++      <option name="SHOW_COMMAND_LINE" value="false" />
++      <option name="EMULATE_TERMINAL" value="false" />
++      <option name="MODULE_MODE" value="false" />
++      <option name="REDIRECT_INPUT" value="false" />
++      <option name="INPUT_FILE" value="" />
++      <method v="2" />
++    </configuration>
++    <recent_temporary>
++      <list>
++        <item itemvalue="Python.Wind_Bubble_Model" />
++      </list>
++    </recent_temporary>
+   </component>
+   <component name="SharedIndexes">
+     <attachedChunks>
+@@ -97,16 +116,34 @@
+       <option name="number" value="Default" />
+       <option name="presentableId" value="Default" />
+       <updated>1761849659670</updated>
+-      <workItem from="1761849660741" duration="3032000" />
++      <workItem from="1761849660741" duration="3202000" />
++      <workItem from="1762457335388" duration="5749000" />
++      <workItem from="1762793036869" duration="154000" />
++      <workItem from="1762800294342" duration="112000" />
++    </task>
++    <task id="LOCAL-00001" summary="After working at Morehead on the laptop Thursday 10/30/25">
++      <option name="closed" value="true" />
++      <created>1761859168085</created>
++      <option name="number" value="00001" />
++      <option name="presentableId" value="LOCAL-00001" />
++      <option name="project" value="LOCAL" />
++      <updated>1761859168085</updated>
+     </task>
++    <option name="localTasksCounter" value="2" />
+     <servers />
+   </component>
+   <component name="TypeScriptGeneratedFilesManager">
+     <option name="version" value="3" />
+   </component>
++  <component name="VcsManagerConfiguration">
++    <MESSAGE value="After working at Morehead on the laptop Thursday 10/30/25" />
++    <option name="LAST_COMMIT_MESSAGE" value="After working at Morehead on the laptop Thursday 10/30/25" />
++  </component>
+   <component name="com.intellij.coverage.CoverageDataManagerImpl">
+     <SUITE FILE_PATH="coverage/GRB_Wind_Bubbles$Wind_Density_Test_Models.coverage" NAME="Wind_Density_Test_Models Coverage Results" MODIFIED="1761852153138" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+-    <SUITE FILE_PATH="coverage/GRB_Wind_Bubbles$Variable_k_model.coverage" NAME="Variable_k_model Coverage Results" MODIFIED="1761852537867" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+-    <SUITE FILE_PATH="coverage/GRB_Wind_Bubbles$Wind_Bubble_Model.coverage" NAME="Wind_Bubble_Model Coverage Results" MODIFIED="1761851178235" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
++    <SUITE FILE_PATH="coverage/GRB_Wind_Bubbles$Two_Stage_Bubble.coverage" NAME="Two_Stage_Bubble Coverage Results" MODIFIED="1762458892136" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
++    <SUITE FILE_PATH="coverage/GRB_Wind_Bubbles$Variable_k_model.coverage" NAME="Variable_k_model Coverage Results" MODIFIED="1762457339864" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
++    <SUITE FILE_PATH="coverage/GRB_Wind_Bubbles$Wind_Bubble_Model_1.coverage" NAME="Wind_Bubble_Model-1 Coverage Results" MODIFIED="1762466932722" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
++    <SUITE FILE_PATH="coverage/GRB_Wind_Bubbles$Wind_Bubble_Model.coverage" NAME="Wind_Bubble_Model Coverage Results" MODIFIED="1762800344398" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/Nov_code" />
+   </component>
+ </project>
+\ No newline at end of file

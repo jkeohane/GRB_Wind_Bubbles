@@ -1,0 +1,184 @@
+# -*- coding: utf-8 -*-
+import numpy as np
+import matplotlib.pyplot as plt
+from VegasAfterglow import TophatJet, Observer, Radiation, Model, Medium
+from os import makedirs
+import astropy as ap
+
+
+# ---------- setup ----------
+makedirs("assets", exist_ok=True)
+
+# constants (cgs)
+pi   = np.pi
+mp   = 1.67262192369e-24
+kb   = 1.3806488e-16
+year = 3.15576e7
+Msun = 1.98847e33
+pc_to_cm = 3.086e18
+
+# ---------- one-stage (n_ism, n_t, R_t free parameters ----------
+def make_one_stage_density(
+    # ISM
+    n_ism   = 1,                  # cm^-3
+#   Bubble Size
+    R_sh = pc_to_cm,        ## default to one parsec  R_sh is in cm
+    n_t = 1.0           # Density just inside the termination shock
+):
+    """
+    Returns: rho(phi,theta,r) [g/cm^3], meta dict
+    Very simple shell assuming it is mixed
+    """
+    n_sh = 4*n_t  ## strong shock factor of 4 in density
+
+    # shell thickness
+    dR = R_sh * n_ism /(3 * n_sh)  ## ism mass is inside of shell
+
+    # region boundaries
+    R1 = R_sh        # WR wind → shell inner
+    R2 = R_sh + dR   # shell outer
+
+    ## convert to density in cgs
+    rho_t = n_t * mp
+    rho_sh = n_sh * mp
+    rho_ism = n_ism * mp
+
+    def rho(phi, theta, r):
+        # free wind
+        if r < R1:
+            return  rho_t * (R1/r)**2
+        # thin shell
+        elif r < R2:
+            return rho_sh
+        # ism
+        else:
+            return rho_ism
+
+    meta = {"R_sh": R_sh, "dR": dR,  "n_t": n_t,
+            "rho_t": rho_t, "n_shell": n_sh,
+            "rho_shell": rho_sh, "n_ism": n_ism, "rho_ism": rho_ism}
+    return rho, meta
+
+# build one medium (tweak parameters here as desired)
+rho_fn, meta = make_one_stage_density( n_ism = 10.0, R_sh = pc_to_cm, n_t = 1.0)
+medium = Medium(rho=rho_fn)
+
+# ---------- model (jet/observer/radiation) ----------
+jet = TophatJet(theta_c=0.1, E_iso=1e52, Gamma0=300)
+obs = Observer(lumi_dist=1e26, z=0.1, theta_obs=0)
+rad = Radiation(eps_e=1e-1, eps_B=1e-3, p=2.3)
+model = Model(jet=jet, medium=medium, observer=obs, fwd_rad=rad)
+
+# ---------- density profile plot with twin axes ----------
+r = np.logspace(16, 20, 600)                     # cm
+rho_profile = np.array([rho_fn(0, 0, ri) for ri in r])
+n_profile   = rho_profile / mp
+
+fig, ax1 = plt.subplots(figsize=(5, 3.6), dpi=200)
+ax1.loglog(r / pc_to_cm, n_profile, color='C0', lw=1.5)
+ax1.set_xlabel('Radius (pc)')
+ax1.set_ylabel(r'n(r) [cm$^{-3}$]')
+ax1.set_title('Simple Bubble Density')
+
+# top x-axis in cm
+def pc_to_cm_f(x):  return x * pc_to_cm
+def cm_to_pc_f(x):  return x / pc_to_cm
+ax2 = ax1.secondary_xaxis('top', functions=(pc_to_cm_f, cm_to_pc_f))
+ax2.set_xlabel('Radius (cm)')
+
+# right y-axis in ρ
+def n_to_rho(y):  return y * mp
+def rho_to_n(y):  return y / mp
+ax3 = ax1.secondary_yaxis('right', functions=(n_to_rho, rho_to_n))
+ax3.set_ylabel(r'$\rho(r)$ [g cm$^{-3}$]')
+
+plt.tight_layout()
+plt.savefig("assets/density_profile.png", dpi=300)
+plt.show()
+
+# ---------- light curves (multi-band) ----------
+# ---------- combined multi-band light curves with dual x- and y-axes ----------
+times = np.logspace(2, 8, 200)           # seconds
+times_days = times / 86400.0
+bands = np.array([1e9, 1e14, 1e17])      # Hz (radio, optical, X-ray)
+band_names = ["Radio", "Optical", "X-ray"]
+
+lc = model.flux_density_grid(times, bands)  # erg cm^-2 s^-1 Hz^-1
+
+fig, ax1 = plt.subplots(figsize=(5.8, 3.8), dpi=200)
+
+# --- main plot (bottom axis: seconds, flux in Jy) ---
+for j, (name, nu) in enumerate(zip(band_names, bands)):
+    exp = int(np.log10(nu))
+    label = fr'{name} ($10^{{{exp}}}$ Hz)'
+    ax1.loglog(times, lc.total[j, :] * 1e23,
+               color=f'C{j}', lw=1.6, label=label)
+
+ax1.set_xlabel('Time (s)')
+ax1.set_ylabel('Flux Density (Jy)')
+ax1.set_title('Afterglow Light Curves in Multiple Bands')
+
+# --- legend (LaTeX formatted) ---
+ax1.legend(title='Band', ncol=1, fontsize=9, title_fontsize=10)
+
+# --- top axis: time in days ---
+def s_to_days(x):  return x / 86400.0
+def days_to_s(x):  return x * 86400.0
+ax2 = ax1.secondary_xaxis('top', functions=(s_to_days, days_to_s))
+ax2.set_xlabel('Time (days)')
+
+# --- right y-axis: flux density in cgs (erg/cm^2/s/Hz) ---
+def Jy_to_cgs(y):  return y * 1e-23
+def cgs_to_Jy(y):  return y / 1e-23
+ax3 = ax1.secondary_yaxis('right', functions=(Jy_to_cgs, cgs_to_Jy))
+ax3.set_ylabel(r'Flux Density [erg cm$^{-2}$ s$^{-1}$ Hz$^{-1}$]')
+
+plt.tight_layout()
+plt.savefig('assets/lightcurves_all_bands.png', dpi=300)
+plt.show()
+
+# ---------- spectra at selected epochs ----------
+frequencies = np.logspace(5, 22, 300)    # Hz
+epochs      = np.array([1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8])  # s
+epochs_days = epochs / 86400.0
+
+spec_grid = model.flux_density_grid(epochs, frequencies)  # shape ~ [len(freq), len(time)]
+
+###
+# ---------- spectra at selected epochs (all on one figure) ----------
+frequencies = np.logspace(5, 22, 300)    # Hz
+epochs      = np.array([1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8])  # s
+epochs_days = epochs / 86400.0
+
+# Compute spectral evolution: Fν(ν, t)
+spec_grid = model.flux_density_grid(epochs, frequencies)  # shape ≈ [len(freq), len(time)]
+
+# --- Plot all epochs on one figure ---
+plt.figure(figsize=(5.5, 3.8), dpi=200)
+colors = plt.cm.plasma(np.linspace(0, 1, len(epochs)))
+
+for j, tsec in enumerate(epochs):
+    # nice epoch label
+    exp = int(np.floor(np.log10(tsec)))
+    base = tsec / 10**exp
+    if np.isclose(base, 1.0):
+        label = fr'$10^{{{exp}}}\,\mathrm{{s}}$'
+    else:
+        label = fr'${base:.1f}\times10^{{{exp}}}\,\mathrm{{s}}$'
+
+    plt.loglog(frequencies, spec_grid.total[:, j] * 1e23,
+               color=colors[j], lw=1.5, label=label)
+
+# Mark radio / optical / X-ray bands
+for k, nu in enumerate(bands):
+    plt.axvline(nu, ls='--', color=f'C{k}', alpha=0.6)
+
+# Labels and legend
+plt.xlabel('Frequency (Hz)')
+plt.ylabel('Flux Density (Jy)')
+plt.title('Synchrotron Spectra at Multiple Epochs')
+plt.legend(title='Epoch (s)', ncol=2, fontsize=8, title_fontsize=9, loc='best')
+
+plt.tight_layout()
+plt.savefig('assets/spectra_all_epochs.png', dpi=300)
+plt.show()
