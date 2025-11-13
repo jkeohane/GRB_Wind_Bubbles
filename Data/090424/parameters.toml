@@ -1,0 +1,257 @@
+# MCMC Parameter Configuriation File
+name = 'FireballModel'
+
+#-------------- MODEL --------------
+#---------------- E ----------------
+[[model]]
+name  = "E"
+scale = "log"
+
+[model.prior]
+    type  = "uniform"
+    lower = -1.0
+    upper = 3.0
+    initial_guess = 0.47
+    initial_sigma = 0.25
+
+#-------------- MODEL --------------
+#---------------- n ----------------
+[[model]]
+name  = "rho0"
+scale = "log"
+
+[model.prior]
+    type  = "uniform"
+    lower = -5.0
+    upper = 1.0
+    initial_guess = -1.8
+    initial_sigma = 0.25
+
+#-------------- MODEL --------------
+#-------------- eps_e --------------
+[[model]]
+name  = "eps_e"
+scale = "log"
+
+[model.prior]
+    type  = "uniform"
+    lower = -3.0
+    upper = 0.0
+    initial_guess = -0.09
+    initial_sigma = 0.1
+
+#-------------- MODEL --------------
+#-------------- eps_b --------------
+[[model]]
+name  = "eps_b"
+scale = "log"
+
+[model.prior]
+    type  = "uniform"
+    lower = -3.0
+    upper = 0.0
+    initial_guess = -0.75
+    initial_sigma = 0.100
+
+#-------------- MODEL --------------
+#---------------- p ----------------
+[[model]]
+name  = "p"
+scale = "linear"
+
+[model.prior]
+    type  = "uniform"
+    lower = 2.0
+    upper = 2.5
+    initial_guess = 2.05
+    initial_sigma = 0.05
+
+#-------------- MODEL --------------
+#---------------- k ----------------
+[[model]]
+name  = "k"
+scale = "linear"
+
+[model.prior]
+    type  = "uniform"
+    lower = 0.0
+    upper = 3.0
+    initial_guess = 1.8
+    initial_sigma = 0.2
+
+#-------------- MODEL --------------
+#---------------- X ----------------
+[[model]]
+name  = "X"
+scale = "linear"
+value = 0.7
+
+#-------------- MODEL --------------
+#---------------- z ----------------
+[[model]]
+name  = "z"
+scale = "linear"
+value = 0.544
+
+#-------------- MODEL --------------
+#---------------- dL ---------------
+[[model]]
+name  = "dL"
+scale = "linear"
+value = 1.00
+
+#----------- EXTINCTION ------------
+#---------- source_frame -----------
+[[extinction]]
+name  = "ebv_source_frame"
+scale = "linear"
+
+[extinction.prior]
+    type  = "uniform"
+    lower = 0.0
+    upper = 0.3
+    initial_guess = 0.02
+    initial_sigma = 0.01
+
+#----------- EXTINCTION ------------
+#------------ milky_way ------------
+[[extinction]]
+name  = "ebv_milky_way"
+scale = "linear"
+value = 0.022
+
+#----------- CALIBRATION -----------
+#-------------- r-band -------------
+[[offsets]]
+name  = "r_offset"
+scale = "linear"
+
+[offsets.prior]
+    type  = "gaussian"
+    mu    = 0.0
+    sigma = 0.03
+
+#----------- CALIBRATION -----------
+#-------------- i-band -------------
+[[offsets]]
+name  = "i_offset"
+scale = "linear"
+
+[offsets.prior]
+    type  = "gaussian"
+    mu    = 0.0
+    sigma = 0.03
+
+#----------- CALIBRATION -----------
+#------------- uvw2-band -----------
+[[offsets]]
+name  = "uvw2_offset"
+scale = "linear"
+
+[offsets.prior]
+    type  = "gaussian"
+    mu    = 0.0
+    sigma = 0.04
+
+#----------- CALIBRATION -----------
+#------------- uvm2-band -----------
+[[offsets]]
+name  = "uvm2_offset"
+scale = "linear"
+
+[offsets.prior]
+    type  = "gaussian"
+    mu    = 0.0
+    sigma = 0.03
+
+#----------- CALIBRATION -----------
+#------------ uvw1-band ------------
+[[offsets]]
+name  = "uvw1_offset"
+scale = "linear"
+
+[offsets.prior]
+    type  = "gaussian"
+    mu    = 0.0
+    sigma = 0.04
+
+#----------- CALIBRATION -----------
+#----------- uvot-u-band -----------
+[[offsets]]
+name  = "uvot-u_offset"
+scale = "linear"
+
+[offsets.prior]
+    type  = "gaussian"
+    mu    = 0.0
+    sigma = 0.03
+
+#----------- CALIBRATION -----------
+#----------- uvot-b-band -----------
+[[offsets]]
+name  = "uvot-b_offset"
+scale = "linear"
+
+[offsets.prior]
+    type  = "gaussian"
+    mu    = 0.0
+    sigma = 0.02
+
+#----------- CALIBRATION -----------
+#------------ uvot-v-band ----------
+[[offsets]]
+name  = "uvot-v_offset"
+scale = "linear"
+
+[offsets.prior]
+    type  = "gaussian"
+    mu    = 0.0
+    sigma = 0.02
+
+#----------- HOST GALAXY -----------
+#-------------- r-band -------------
+[[host]]
+name  = "r_host"
+scale = "log"
+
+[host.prior]
+    type = "uniform"
+    lower = -2.8
+    upper = -1.2
+    initial_guess = -2.227
+    initial_sigma = 0.01
+
+#----------- HOST GALAXY -----------
+#-------------- i-band -------------
+[[host]]
+name  = "i_host"
+scale = "log"
+
+[host.prior]
+    type = "uniform"
+    lower = -2.8
+    upper = -1.6
+    initial_guess = -2.17
+    initial_sigma = 0.01
+
+#--------------- SLOP --------------
+#--------------- slop --------------
+[[slop]]
+name  = "slop_uvot"
+scale = "linear"
+
+[slop.prior]
+    type  = "uniform"
+    lower = 0.0
+    upper = 0.3
+
+#--------------- SLOP --------------
+#--------------- slop --------------
+[[slop]]
+name  = "slop_other"
+scale = "linear"
+
+[slop.prior]
+    type  = "uniform"
+    lower = 0.00
+    upper = 0.12
