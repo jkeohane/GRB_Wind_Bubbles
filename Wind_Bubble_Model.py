@@ -1,123 +1,127 @@
 # -*- coding: utf-8 -*-
 import numpy as np
 import matplotlib.pyplot as plt
-from VegasAfterglow import TophatJet, Observer, Radiation, Model, Medium
+from VegasAfterglow import TophatJet, Observer, Radiation, Model, Medium, Wind
 from os import makedirs
+import astropy as ap
 
 # ---------- setup ----------
 makedirs("assets", exist_ok=True)
 
+debug = True
+
 # constants (cgs)
 pi   = np.pi
-mp   = 1.67262192369e-24
-kb   = 1.3806488e-16
-year = 3.15576e7
-Msun = 1.98847e33
-pc_to_cm = 3.086e18
+mp   = 1.67262192369e-24  #  g
+mu   = 1.3
+m_mol = mu * mp
+kb   = 1.3806488e-16  # erg/K
+day  = 86400.0   # s
+year = 3.15576e7 # s
+Msun = 1.98847e33 # g
+pc_to_cm = 3.086e18 # cm
 
-# ---------- two-stage (slow → WR) density ----------
-def make_two_stage_density(
-    # WR (inner, fast)
-    Mdot_WR = 6e-6 * Msun / year,   # g/s  (≈ 6e-6 Msun/yr)
-    v_WR    = 2e8,                  # cm/s (≈ 2000 km/s)
-    t_WR    = 1e4 * year,           # s    (10^4 yr)
+# ---------- FREE PARAMETERS ARE GLOBALS n_ism, n_t, R_t  ----------
+n_ism   = 1.0          # cm^-3
+R_t = 0.1 * pc_to_cm   ## #   Bubble Size in cm
+n_t = 10.0             # Density just inside the termination shock
+#  ------------------------------------------------------------------
 
-    # Slow phase (LBV/RSG)
-    Mdot_slow = 3e-5 * Msun / year, # g/s  (≈ 3e-5 Msun/yr)
-    v_slow    = 2.5e6,              # cm/s (≈ 25 km/s → RSG; use 1e7 for LBV 100 km/s)
-    t_slow    = 5e4 * year,         # s    (5×10^4 yr laid down pre-WR)
-
-    # ISM
-    n_ism   = 1.0,                  # cm^-3
-    rho_ism = None,                 # g/cm^3; if None, set to n_ism*mp
-
-    # shell placement & mass loading
-    shell_mode    = "kinematic",    # "kinematic" or "fractional"
-    frac_Rsh      = 0.5,            # if "fractional": R_sh = frac_Rsh * R_slow
-    f_sweep       = 0.7,            # fraction of slow-wind mass (inside R_sh) swept into shell
-    rel_thickness = 0.03            # ΔR / R_sh (geometrically thin)
-):
+def rho(phi, theta, r):
     """
-    Returns: rho(phi,theta,r) [g/cm^3], meta dict
-    Inner WR wind, thin swept shell at R_sh, slow wind out to R_slow, ISM beyond.
+    Returns: rho(phi,theta,r) [g/cm^3],
+    Very simple shell assuming it is mixed
     """
-    if rho_ism is None:
-        rho_ism = n_ism * mp
+    # Parameters to be fit
+    global R_t, n_t, n_ism
+    n_sh = max(4 * n_t, 4 * n_ism)  ## strong shock factor of 4 in density & guarantees n_sh > n_ism
+    # region boundary
+    # R1 would be R_t   R2 us outside of shell
+    R2 = R_t * ((n_sh + 3*n_t) / (n_sh - n_ism)) ** 0.333  # shell outer --> ISM
+    # Notice the limits.  Very important that it is continuous if n_t = n_ism
+    #   if n_t > n_ism then:    R2 = ( 7 n_t )/(4 n_t - n_ism)  R_t
+    #   if n_t >> n_ism   R2 ~ (7/4)R_t  + (7/16) (n_ism/n_t)
+    #   if n_t >>> n_ism        R2 ~ (7/4)R_t    ### 7/4 = 1.75
+    #   if n_t >== n_ism        R2 ~ (7/3)R_t    ### 7/3 = 2.33
+    #   if n_t <== n_ism        R2 ~ (7/3)R_t --- CHECK!!!  No jumps in parameter space
+    #   if n_t < n_ism then:    R2 = ( (4/3) + n_t/n_ism) R_t
+    #   if n_t << n_ism then:   R2 ~ (4/3) R_t  ### 4/3 = 1.33
+    #   Notice the bubble is biggest, compared to R_t, if n_t and n_ism are near each other
+    #   Also, this makes the most physical sense if n_t > n_ism.
+    #   Remember the model assumes n_ism kT_ism = m_p n_t v_wind**2 at R_t
+    #   This model assumes that the same amount of mass that is in the wind,
+    #   is also in the shell.
+    #   After radiative cooling occurs, the mass of the shell will stay the
+    #   same, but it will become thinner.  Also, the WR stage would probably have started
+    #   and we probably would have a superwind.
 
-    # A-parameters (g cm^-1)
-    A_WR   = Mdot_WR   / (4.0 * pi * v_WR)
-    A_slow = Mdot_slow / (4.0 * pi * v_slow)
+    ## convert to density in cgs
+    rho_t = n_t * m_mol
+    rho_sh = n_sh * m_mol
+    rho_ism = n_ism * m_mol
 
-    # slow wind extent (laid down before WR)
-    R_slow = max(1e15, v_slow * t_slow)
+    if debug:
+        meta = {"R_sh": 0.5 * (R2 - R_t), "dR": R2 - R_t, "n_t": n_t,
+                "rho_t": rho_t, "n_shell": n_sh,
+                "rho_shell": rho_sh, "n_ism": n_ism, "rho_ism": rho_ism}
+        print(meta)
 
-    # shell radius
-    if shell_mode.lower().startswith("kin"):
-        R_sh = max(1e15, min(R_slow, v_slow * t_WR))
+    # free wind
+    if r < R_t:
+        return  rho_t * (R_t/r)**2
+    # thin shell
+    elif r < R2:
+        return rho_sh
+    # ism
     else:
-        R_sh = max(1e15, min(R_slow, frac_Rsh * R_slow))
-
-    # shell thickness
-    dR = max(1e-3 * R_sh, rel_thickness * R_sh)
-
-    # mass of slow wind interior to R_sh (for ρ∝r^-2: M(<R)=(Mdot/v)*R)
-    M_slow_in = (Mdot_slow / v_slow) * R_sh
-    M_shell   = f_sweep * M_slow_in
-
-    # uniform shell density (mass / volume of thin spherical shell)
-    rho_shell = M_shell / (4.0 * pi * R_sh**2 * dR)
-
-    # region boundaries
-    R1 = R_sh        # WR wind → shell inner
-    R2 = R_sh + dR   # shell outer
-    R3 = R_slow      # slow wind outer
-
-    def rho(phi, theta, r):
-        # free WR wind
-        if r < R1:
-            return A_WR / (r**2)
-        # thin shell
-        if r < R2:
-            return rho_shell
-        # slow wind zone
-        if r < R3:
-            return A_slow / (r**2)
-        # ambient ISM
         return rho_ism
 
-    meta = {"R_sh": R_sh, "dR": dR, "R_slow": R_slow,
-            "rho_shell": rho_shell, "A_WR": A_WR, "A_slow": A_slow,
-            "n_ism": n_ism, "rho_ism": rho_ism}
-    return rho, meta
-
 # build one medium (tweak parameters here as desired)
-rho_fn, meta = make_two_stage_density(
-    # choose LBV or RSG character by v_slow; other knobs above
-    v_slow=2.5e6,        # 25 km/s (RSG-like)
-    n_ism=1.0,           # cm^-3
-    f_sweep=0.7,
-    rel_thickness=0.03
-)
-medium = Medium(rho=rho_fn)
+
+bubble = Medium(rho=rho)
+A = m_mol*n_t*R_t*R_t  # in cgs  ## VA assumes a mu of 1.3 I guess depends on the helium too
+wind = Wind(A_star=A/5E11)
+wind_2 = Wind(A_star=A/5E11,n_ism=n_ism*mu)  ## Vegas Afterglow is not consistent on mean molecular weight
 
 # ---------- model (jet/observer/radiation) ----------
 jet = TophatJet(theta_c=0.1, E_iso=1e52, Gamma0=300)
 obs = Observer(lumi_dist=1e26, z=0.1, theta_obs=0)
 rad = Radiation(eps_e=1e-1, eps_B=1e-3, p=2.3)
-model = Model(jet=jet, medium=medium, observer=obs, fwd_rad=rad)
+
+models = []  ; model_names = []
+model = Model(jet=jet, medium=bubble, observer=obs, fwd_rad=rad)
+model_names.append("Simple Bubble")
+models.append(model)
+model = Model(jet=jet, medium=wind, observer=obs, fwd_rad=rad)
+model_names.append("Simple Wind")
+models.append(model)
+model = Model(jet=jet, medium=wind_2, observer=obs, fwd_rad=rad)
+model_names.append("Stratified Wind")
+models.append(model)
 
 # ---------- density profile plot with twin axes ----------
-r = np.logspace(16, 20, 600)                     # cm
-#rho_profile = np.array([rho_fn(0, 0, ri) for ri in r])
-rho_profile = model.medium(0,0,r)
-n_profile   = rho_profile / mp
+# ---------- density profile from the model's medium ----------
+
+r = np.logspace(16, 20, 600)  # cm
+
+# vectorized evaluation using the model's medium (returns g/cm^3)
+
+#rho_profile = np.array([medium_rho(model, 0.0, 0.0, ri) for ri in r])
 
 fig, ax1 = plt.subplots(figsize=(5, 3.6), dpi=200)
-ax1.loglog(r / pc_to_cm, n_profile, color='C0', lw=1.5)
+
+for i,model in enumerate(models):
+    rho_profile = np.asarray(model.medium(0.0, 0.0, r), dtype=float)
+    # convert to number density if you want n(r)
+    n_profile = rho_profile / (m_mol)  # cm^-3
+    ax1.loglog(r / pc_to_cm, n_profile, lw=1.5, label=model_names[i],
+               alpha=0.6/(i+1))
+
+
 ax1.set_xlabel('Radius (pc)')
 ax1.set_ylabel(r'n(r) [cm$^{-3}$]')
-ax1.set_title('Two-Stage (LBV/RSG → WR) Bubble Density')
-
+ax1.set_title('Model Medium Density')
+ax1.legend(fontsize=6)
 # top x-axis in cm
 def pc_to_cm_f(x):  return x * pc_to_cm
 def cm_to_pc_f(x):  return x / pc_to_cm
@@ -125,8 +129,8 @@ ax2 = ax1.secondary_xaxis('top', functions=(pc_to_cm_f, cm_to_pc_f))
 ax2.set_xlabel('Radius (cm)')
 
 # right y-axis in ρ
-def n_to_rho(y):  return y * mp
-def rho_to_n(y):  return y / mp
+def n_to_rho(y):  return y * (m_mol)
+def rho_to_n(y):  return y / (m_mol)
 ax3 = ax1.secondary_yaxis('right', functions=(n_to_rho, rho_to_n))
 ax3.set_ylabel(r'$\rho(r)$ [g cm$^{-3}$]')
 
@@ -134,34 +138,43 @@ plt.tight_layout()
 plt.savefig("assets/density_profile.png", dpi=300)
 plt.show()
 
+
 # ---------- light curves (multi-band) ----------
 # ---------- combined multi-band light curves with dual x- and y-axes ----------
 times = np.logspace(2, 8, 200)           # seconds
-times_days = times / 86400.0
+times_days = times / day
 bands = np.array([1e9, 1e14, 1e17])      # Hz (radio, optical, X-ray)
 band_names = ["Radio", "Optical", "X-ray"]
-
-lc = model.flux_density_grid(times, bands)  # erg cm^-2 s^-1 Hz^-1
+lcs = []
+for model in models:
+    lcs.append( model.flux_density_grid(times, bands) ) # erg cm^-2 s^-1 Hz^-1
 
 fig, ax1 = plt.subplots(figsize=(5.8, 3.8), dpi=200)
 
+i =0
 # --- main plot (bottom axis: seconds, flux in Jy) ---
 for j, (name, nu) in enumerate(zip(band_names, bands)):
     exp = int(np.log10(nu))
-    label = fr'{name} ($10^{{{exp}}}$ Hz)'
-    ax1.loglog(times, lc.total[j, :] * 1e23,
-               color=f'C{j}', lw=1.6, label=label)
+    for k, lc in enumerate(lcs):
+        label = fr'{name} ($10^{{{exp}}}$ Hz)' + " " + str(model_names[k])
+        if model_names[k] == "Simple Bubble":
+            alpha = 0.75
+        else:
+            alpha
+        ax1.loglog(times, lc.total[j, :] * 1e23,
+                   color=f'C{3*j+k}', lw=1.6, label=label, alpha=alpha)
+        i = i+1
 
 ax1.set_xlabel('Time (s)')
 ax1.set_ylabel('Flux Density (Jy)')
 ax1.set_title('Afterglow Light Curves in Multiple Bands')
 
 # --- legend (LaTeX formatted) ---
-ax1.legend(title='Band', ncol=1, fontsize=9, title_fontsize=10)
+ax1.legend(ncol=len(bands), fontsize=3)
 
 # --- top axis: time in days ---
-def s_to_days(x):  return x / 86400.0
-def days_to_s(x):  return x * 86400.0
+def s_to_days(x):  return x / day
+def days_to_s(x):  return x * day
 ax2 = ax1.secondary_xaxis('top', functions=(s_to_days, days_to_s))
 ax2.set_xlabel('Time (days)')
 
@@ -175,25 +188,23 @@ plt.tight_layout()
 plt.savefig('assets/lightcurves_all_bands.png', dpi=300)
 plt.show()
 
-# ---------- spectra at selected epochs ----------
-frequencies = np.logspace(5, 22, 300)    # Hz
-epochs      = np.array([1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8])  # s
-epochs_days = epochs / 86400.0
-
-spec_grid = model.flux_density_grid(epochs, frequencies)  # shape ~ [len(freq), len(time)]
-
 ###
 # ---------- spectra at selected epochs (all on one figure) ----------
 frequencies = np.logspace(5, 22, 300)    # Hz
-epochs      = np.array([1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8])  # s
-epochs_days = epochs / 86400.0
+epochs      = np.array([1e3, 1e4, 1e5, 1e6, 1e7, 1e8])  # s
+epochs_days = epochs / day
 
 # Compute spectral evolution: Fν(ν, t)
-spec_grid = model.flux_density_grid(epochs, frequencies)  # shape ≈ [len(freq), len(time)]
+spec_grids = []
+for model in models:
+    spec_grids.append(model.flux_density_grid(epochs, frequencies)  ) # shape ≈ [len(freq), len(time)]
 
 # --- Plot all epochs on one figure ---
 plt.figure(figsize=(5.5, 3.8), dpi=200)
-colors = plt.cm.plasma(np.linspace(0, 1, len(epochs)))
+colors = plt.cm.plasma(np.linspace(0, 1, 3*len(epochs)))
+# Mark radio / optical / X-ray bands
+for k, nu in enumerate(bands):
+    plt.axvline(nu, ls='--', color=f'C{k}', alpha=0.6)
 
 for j, tsec in enumerate(epochs):
     # nice epoch label
@@ -203,19 +214,16 @@ for j, tsec in enumerate(epochs):
         label = fr'$10^{{{exp}}}\,\mathrm{{s}}$'
     else:
         label = fr'${base:.1f}\times10^{{{exp}}}\,\mathrm{{s}}$'
-
-    plt.loglog(frequencies, spec_grid.total[:, j] * 1e23,
-               color=colors[j], lw=1.5, label=label)
-
-# Mark radio / optical / X-ray bands
-for k, nu in enumerate(bands):
-    plt.axvline(nu, ls='--', color=f'C{k}', alpha=0.6)
+    for k, spec_grid in enumerate(spec_grids):
+        new_label = label + ' ' + model_names[k]
+        plt.loglog(frequencies, spec_grid.total[:, j] * 1e23,
+                   color=colors[3*j+k], lw=1.5, label=new_label, alpha=0.3)
 
 # Labels and legend
 plt.xlabel('Frequency (Hz)')
 plt.ylabel('Flux Density (Jy)')
 plt.title('Synchrotron Spectra at Multiple Epochs')
-plt.legend(title='Epoch (s)', ncol=2, fontsize=8, title_fontsize=9, loc='best')
+plt.legend(ncol=len(epochs), fontsize=(3*7/len(epochs)), loc='lower center')
 
 plt.tight_layout()
 plt.savefig('assets/spectra_all_epochs.png', dpi=300)
