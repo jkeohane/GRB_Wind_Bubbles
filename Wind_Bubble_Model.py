@@ -21,10 +21,28 @@ year = 3.15576e7 # s
 Msun = 1.98847e33 # g
 pc_to_cm = 3.086e18 # cm
 
-# ---------- FREE PARAMETERS ARE GLOBALS n_ism, n_t, R_t  ----------
-n_ism   = 1.0          # cm^-3
-R_t = 0.1 * pc_to_cm   ## #   Bubble Size in cm
-n_t = 10.0             # Density just inside the termination shock
+# ---------- PARAMETERS----------
+E_iso = 3.97485e+51
+Gamma0 = 307.554
+theta_c = 0.101333
+eps_e = 0.730569
+eps_B = 0.121648
+p = 2.26557
+R_t = 3.17642e+17
+log10_n_t = -1.19935
+log10_n_ism = -1.91702
+
+n_ism   = 10**(log10_n_ism)          # cm^-3
+n_t = 10**(log10_n_t)             # Density just inside the termination shock
+
+z = 0.1
+lumi_dist_cm = 1e+26
+theta_obs = 0.0
+mu = 1.3
+nwalkers = 64
+burn = 1000
+nsteps = 3000
+num_nu_grid = 32
 #  ------------------------------------------------------------------
 
 def rho(phi, theta, r):
@@ -84,9 +102,10 @@ wind = Wind(A_star=A/5E11)
 wind_2 = Wind(A_star=A/5E11,n_ism=n_ism*mu)  ## Vegas Afterglow is not consistent on mean molecular weight
 
 # ---------- model (jet/observer/radiation) ----------
-jet = TophatJet(theta_c=0.1, E_iso=1e52, Gamma0=300)
-obs = Observer(lumi_dist=1e26, z=0.1, theta_obs=0)
-rad = Radiation(eps_e=1e-1, eps_B=1e-3, p=2.3)
+
+jet = TophatJet(theta_c=theta_c, E_iso=E_iso, Gamma0=Gamma0)
+obs = Observer(lumi_dist=lumi_dist_cm, z=z, theta_obs=0)
+rad = Radiation(eps_e=eps_e, eps_B=eps_B, p=p)
 
 models = []  ; model_names = []
 model = Model(jet=jet, medium=bubble, observer=obs, fwd_rad=rad)

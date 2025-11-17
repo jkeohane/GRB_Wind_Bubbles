@@ -13,7 +13,7 @@ Speed-optimized afterglow fit with:
       - --priors_out : write best-fit + chain stats back to a TOML file
 """
 
-import sys, os, math, re, argparse
+import sys, os, math, argparse, pickle
 import numpy as np
 import pandas as pd
 import emcee
@@ -40,11 +40,13 @@ c  = 2.99792458e10      # cm s^-1
 
 UNIT_SCALE = {'jy':1e-23,'mjy':1e-26,'ujy':1e-29,'µjy':1e-29}
 FREQ_SCALE = {'hz':1.0,'khz':1e3,'mhz':1e6,'ghz':1e9,'thz':1e12}
-
 TIME_BINS_PER_DECADE = 8
 REL_FREQ_GROUP = 1e-3
-
-PARAM_NAMES = ["E_iso","Gamma0","theta_c","eps_e","eps_B","p","R_t","log10_n_t","log10_n_ism"]
+MINIMUM_TIME = 5E2 # seconds
+PARAM_NAMES = ["E_iso","Gamma0","theta_c","eps_e","eps_B",
+               "p","R_t","log10_n_t","log10_n_ism"]
+PLOT_ONLY = False
+GRB_NAME = "080413B"
 
 # ---------- config ----------
 @dataclass
@@ -54,7 +56,7 @@ class FitConfig:
     theta_obs: float = 0.0
     mu: float = 1.3
     num_nu_grid: int = 32
-    nwalkers: int = 64
+    nwalkers: int = 128
     nsteps: int = 3000
     burn: int = 1000
     seed: int = 1234
@@ -109,7 +111,7 @@ def load_080413_schema(csv_path: str):
         hi_i = hi[i] if isinstance(hi[i], (int,float,np.floating)) else np.nan
         sigs=[s for s in [lo_i,hi_i] if np.isfinite(s) and s>0]
         if sigs: e[i]=max(sigs)*s
-    mask_base = np.isfinite(t)&np.isfinite(nu)&np.isfinite(f)&(nu>0)
+    mask_base = np.isfinite(t)&np.isfinite(nu)&np.isfinite(f)&(nu>1E6)&(t>MINIMUM_TIME)
     if np.any(~np.isfinite(e)&mask_base):
         idx=np.where(mask_base)[0]
         order=idx[np.argsort(nu[idx])]
@@ -126,7 +128,7 @@ def load_080413_schema(csv_path: str):
                 if not (np.isfinite(e2[k]) and e2[k]>0):
                     e2[k]=med if (med and med>0) else max(1e-6,0.1*abs(f[k]))
         e=e2
-    mask = np.isfinite(t)&np.isfinite(nu)&np.isfinite(f)&np.isfinite(e)&(nu>0)&(e>0)
+    mask = np.isfinite(t)&np.isfinite(nu)&np.isfinite(f)&np.isfinite(e)&(nu>0)&(e>0)&(t>MINIMUM_TIME)
     if not np.any(mask): raise ValueError("No valid rows after parsing")
     return t[mask], nu[mask], f[mask], e[mask]
 
@@ -193,13 +195,80 @@ def build_model(theta, cfg: FitConfig):
     return Model(jet=jet, medium=Medium(rho=rho_fn), observer=obs, fwd_rad=rad)
 
 def predict(model, times, freqs, cfg: FitConfig):
-    t_grid = np.unique(times.astype(float))
-    nu_min, nu_max = float(np.nanmin(freqs)), float(np.nanmax(freqs))
-    grid = model.flux(t=t_grid, nu_min=nu_min, nu_max=nu_max, num_nu=cfg.num_nu_grid)
-    preds=np.empty_like(times,float)
-    for k in range(times.size):
-        preds[k]=float(grid.total[nearest_index(grid.nu,freqs[k]), nearest_index(grid.t,times[k])])
-    return preds
+    """
+    Predict model flux at arbitrary (time, frequency) pairs using
+    VegasAfterglow's flux_density_grid(times, freqs).
+
+    Returns an array with the same shape as `times` / `freqs`.
+    """
+    times = np.asarray(times, float)
+    freqs = np.asarray(freqs, float)
+
+    if times.shape != freqs.shape:
+        raise ValueError(f"predict: times.shape={times.shape} and "
+                         f"freqs.shape={freqs.shape} must match")
+
+    # Flatten for convenience, but remember original shape
+    orig_shape = times.shape
+    t_flat = times.ravel()
+    nu_flat = freqs.ravel()
+
+    # Basic sanity mask
+    good = (np.isfinite(t_flat) & np.isfinite(nu_flat) &
+            (t_flat > 0.0) & (nu_flat > 0.0))
+    if not np.any(good):
+        return np.full(orig_shape, np.nan, float)
+
+    # Replace any bad entries by medians so the grid call still works
+    t_work = t_flat.copy()
+    nu_work = nu_flat.copy()
+    t_med = np.nanmedian(t_flat[good])
+    nu_med = np.nanmedian(nu_flat[good])
+    t_work[~good] = t_med
+    nu_work[~good] = nu_med
+
+    # Unique grids in time and frequency
+    t_unique, t_inv = np.unique(t_work, return_inverse=True)
+    nu_unique, nu_inv = np.unique(nu_work, return_inverse=True)
+
+    # This is the API that works in Wind_Bubble_Model.py:
+    # grid = model.flux_density_grid(times, freqs)
+    # grid.total has shape (Nfreq, Ntime) and we index [ifreq, itime]
+    grid = model.flux_density_grid(t_unique, nu_unique)
+    A = np.asarray(grid.total)
+    A = np.squeeze(A)
+
+    # We expect A.shape == (len(nu_unique), len(t_unique))
+    n_nu = nu_unique.size
+    n_t  = t_unique.size
+
+    if A.ndim == 1:
+        # Only one time or one frequency
+        if A.size == n_t and n_nu == 1:
+            A = A.reshape(1, n_t)
+        elif A.size == n_nu and n_t == 1:
+            A = A.reshape(n_nu, 1)
+        else:
+            A = A.reshape(n_nu, n_t)
+    elif A.ndim == 2:
+        if A.shape != (n_nu, n_t):
+            # Maybe the axes are swapped
+            if A.shape == (n_t, n_nu):
+                A = A.T
+            else:
+                A = A.reshape(n_nu, n_t)
+    else:
+        # Fallback: flatten then reshape
+        A = A.reshape(n_nu, n_t)
+
+    # Now A[nu_index, t_index]
+    preds_flat = A[nu_inv, t_inv].astype(float)
+
+    # Restore NaNs in originally bad entries
+    preds_flat[~good] = np.nan
+
+    return preds_flat.reshape(orig_shape)
+
 
 def log_prior_uniform(theta, bounds_map):
     for val, name in zip(theta, PARAM_NAMES):
@@ -378,43 +447,125 @@ def init_walkers(theta0, nwalkers, rng, bounds_map):
         p0[i,:]=trial
     return p0
 
-def run_emcee(t, nu, f, e, theta0, cfg: FitConfig, bounds_map, normal_map):
-    rng=np.random.default_rng(cfg.seed); ndim=theta0.size
-    if cfg.nwalkers<2*ndim: raise ValueError("nwalkers too small")
-    p0=init_walkers(theta0,cfg.nwalkers,rng,bounds_map)
-    sampler=emcee.EnsembleSampler(cfg.nwalkers, ndim, log_prob, args=(t,nu,f,e,cfg,bounds_map,normal_map), moves=emcee.moves.StretchMove(a=1.8))
-    state=sampler.run_mcmc(p0, cfg.burn, progress=True)
-    sampler.reset(); sampler.run_mcmc(state, cfg.nsteps, progress=True)
-    flat_lnprob=sampler.get_log_prob(flat=True); flat_chain=sampler.get_chain(flat=True)
-    ibest=int(np.argmax(flat_lnprob)); best=flat_chain[ibest,:]
-    return best, sampler.get_chain(), sampler.get_log_prob()
+def run_emcee(t, nu, f, e, theta0, cfg: FitConfig,
+              bounds_map, normal_map,
+              state0=None, chain0=None, lnps0=None, resume=False):
+    """
+    Run or resume an emcee EnsembleSampler.
+
+    If resume == False:
+        - Initialize walkers around theta0
+        - Run burn-in, reset, then production run of cfg.nsteps.
+
+    If resume == True and state0 is not None:
+        - Start from saved sampler.State and take another cfg.nsteps.
+        - If chain0/lnps0 are provided, append new samples onto them.
+
+    Returns:
+        best       : (ndim,) best-fit parameters (max log-posterior)
+        chain_all  : (nwalkers, nsteps_total, ndim) full chain
+        lnps_all   : (nwalkers, nsteps_total)     full log-prob
+        state      : final emcee sampler.State for future resume
+    """
+    rng = np.random.default_rng(cfg.seed)
+    ndim = theta0.size
+    if cfg.nwalkers < 2 * ndim:
+        raise ValueError("nwalkers too small")
+
+    # New sampler every time (state object carries coords & RNG)
+    sampler = emcee.EnsembleSampler(
+        cfg.nwalkers,
+        ndim,
+        log_prob,
+        args=(t, nu, f, e, cfg, bounds_map, normal_map),
+        moves=emcee.moves.StretchMove(a=1.8),
+    )
+
+    if resume and (state0 is not None):
+        print("[run_emcee] Resuming from saved state.")
+        # Continue chain from state0
+        state = sampler.run_mcmc(state0, cfg.nsteps, progress=True)
+        new_chain = sampler.get_chain()
+        new_lnps  = sampler.get_log_prob()
+
+        if (chain0 is not None) and (lnps0 is not None):
+            # Append in time (axis=1)
+            if chain0.shape[0] != new_chain.shape[0] or chain0.shape[2] != new_chain.shape[2]:
+                raise ValueError("Saved chain does not match current sampler dimensions.")
+            chain_all = np.concatenate([chain0, new_chain], axis=1)
+            lnps_all  = np.concatenate([lnps0,  new_lnps],  axis=1)
+        else:
+            chain_all = new_chain
+            lnps_all  = new_lnps
+
+    else:
+        print("[run_emcee] Starting fresh chain.")
+        p0 = init_walkers(theta0, cfg.nwalkers, rng, bounds_map)
+        state = sampler.run_mcmc(p0, cfg.burn, progress=True)
+        sampler.reset()
+        state = sampler.run_mcmc(state, cfg.nsteps, progress=True)
+        chain_all = sampler.get_chain()
+        lnps_all  = sampler.get_log_prob()
+
+    # Best point over entire chain
+    flat_chain = chain_all.reshape(-1, ndim)
+    flat_lnps  = lnps_all.reshape(-1)
+    ibest = int(np.argmax(flat_lnps))
+    best = flat_chain[ibest, :]
+
+    return best, chain_all, lnps_all, state
 
 # ---------- plotting ----------
-def plot_lightcurves(model, t, nu, f, e, outpath):
+def plot_lightcurves(model, t, nu, f, e, outpath, cfg: FitConfig):
     """
-    Plot model light curves + data.
-    Each frequency group gets one model curve and matching–color data points.
+    Plot model light curves + binned data.
+
+    For each frequency group, we construct a time grid, evaluate the
+    model at that (t, nu0) pair using `predict`, then overplot the
+    binned data in the same color.
     """
     groups = group_by_frequency(nu)
 
+    # Time grid for the model curves
     tmin, tmax = float(np.nanmin(t)), float(np.nanmax(t))
-    t_grid = np.logspace(np.log10(max(tmin, 1e-6)),
-                         np.log10(tmax * 1.2),
-                         300)
+    try:
+        tmin = float(MINIMUM_TIME)
+    t_grid = np.logspace(
+        np.log10(max(tmin, 100)),
+        np.log10(tmax * 1.2),
+        300,
+    )
 
     plt.figure()
+
     for g in groups:
         nu0 = float(np.median(nu[g]))
 
-        # Model curve for this frequency
-        grid = model.flux(t=t_grid, nu_min=nu0, nu_max=nu0, num_nu=1)
-        y = robust_total_to_curve(grid.total, expect_len=t_grid.size)
+        # Frequency array matching t_grid, all at nu0
+        nu_vec = np.full_like(t_grid, nu0, dtype=float)
 
-        # Draw model line and grab its color
-        (line,) = plt.loglog(t_grid, y, lw=1.8, label=f"{nu0:.3g} Hz")
+        # Evaluate model using the same machinery as log_like
+        try:
+            y = predict(model, t_grid, nu_vec, cfg)
+        except Exception as err:
+            print(f"[plot_lightcurves] Failed at nu ≈ {nu0:.3g} Hz: {err}")
+            continue
+
+        y = np.asarray(y, float)
+
+        # Mask non-finite/nonpositive values for log–log
+        m_mod = np.isfinite(y) & (y > 0.0)
+        n_good = np.count_nonzero(m_mod)
+        if n_good == 0:
+            print(f"[plot_lightcurves] nu ≈ {nu0:.3g} Hz: no positive model flux; skipping.")
+            continue
+
+        # Draw model curve and grab its color
+        (line,) = plt.loglog(t_grid[m_mod], y[m_mod],
+                             lw=1.8, label=f"{nu0:.3g} Hz")
         col = line.get_color()
-        plt.plot(np.log10(t_grid), np.log10(y), color=col)
-        # Data points in the same color
+
+        # Overplot the binned data in the same color
         plt.errorbar(
             t[g], f[g], yerr=e[g],
             fmt="o", ms=4, capsize=2,
@@ -424,57 +575,111 @@ def plot_lightcurves(model, t, nu, f, e, outpath):
 
     plt.xlabel("Time [s]")
     plt.ylabel("Flux density [erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$]")
-    plt.legend(loc="best", fontsize=8)
+
+    handles, labels = plt.gca().get_legend_handles_labels()
+    if labels:
+        plt.legend(loc="best", fontsize=8)
+
     os.makedirs(os.path.dirname(outpath), exist_ok=True)
     plt.tight_layout()
     plt.savefig(outpath, dpi=200)
+    print(f"[plot_lightcurves] Saved plot to {outpath}")
     plt.show()
     plt.close()
 
 
 def pick_epochs(t, n=3):
-    tl=np.sort(np.unique(t)); 
-    if tl.size<=n: return tl.tolist()
-    qs=np.quantile(np.log10(tl), [0.05,0.5,0.95]); return (10**qs).tolist()
+    """
+    Pick up to n representative epochs from the time array:
+    early, middle, late in log time.
+    """
+    t = np.asarray(t, float)
+    tpos = t[t > 0.0]
+    if tpos.size == 0:
+        return []
+    tpos = np.unique(tpos)
+    if tpos.size <= n:
+        return tpos.tolist()
+    qs = np.quantile(np.log10(tpos), [0.05, 0.5, 0.95])
+    return (10.0 ** qs).tolist()
 
-def robust_total_to_curve(grid_total, expect_len):
-    A = np.asarray(grid_total); A = np.squeeze(A)
-    if A.ndim == 1:
-        return A if A.size==expect_len else np.ravel(A)[:expect_len]
-    if A.ndim == 2:
-        if A.shape[0]==expect_len and A.shape[1]==1: return A[:,0]
-        if A.shape[1]==expect_len and A.shape[0]==1: return A[0,:]
-        return np.ravel(A)[:expect_len]
-    return np.ravel(A)[:expect_len]
 
 def plot_spectra(model, t, nu, f, e, outpath):
     """
     Plot model spectra at a few epochs + nearby data.
-    Each epoch gets one spectrum and same-color points.
+
+    Uses VegasAfterglow's flux_density_grid(times, freqs) just like in
+    Wind_Bubble_Model.py.  Each chosen epoch gets one model spectrum.
     """
     epochs = pick_epochs(t, 3)
+    if not epochs:
+        print("[plot_spectra] No valid epochs found; skipping.")
+        return
 
-    nu_min = max(1e1, float(np.nanmin(nu)) * 0.8)
-    nu_max = float(np.nanmax(nu)) * 1.2
-    nu_grid = np.logspace(np.log10(nu_min), np.log10(nu_max), 300)
+    # Data-based frequency range
+    nu_min_data = float(np.nanmin(nu))
+    nu_max_data = float(np.nanmax(nu))
+    nu_min = float(100E6)
+    nu_max = float(1E18)
+    print("Min and max nu = ", nu_min_data, nu_max_data)
+
+    # Frequency grid for spectra
+    nu_grid = np.logspace(
+        np.log10(nu_min * 0.8),
+        np.log10(nu_max * 1.2),
+        300,
+    )
+
+    epochs_arr = np.array(epochs, float)
+
+    # One call to flux_density_grid for all epochs
+    spec_grid = model.flux_density_grid(epochs_arr, nu_grid)
+    A = np.asarray(spec_grid.total)
+    A = np.squeeze(A)
+
+    n_nu = nu_grid.size
+    n_t  = epochs_arr.size
+
+    # We expect shape (Nfreq, Nepochs)
+    if A.ndim == 1:
+        if A.size == n_nu and n_t == 1:
+            A = A.reshape(n_nu, 1)
+        else:
+            raise ValueError(
+                f"[plot_spectra] unexpected 1D total of size {A.size} "
+                f"(expected {n_nu} or {n_nu * n_t})"
+            )
+    elif A.ndim == 2:
+        if A.shape != (n_nu, n_t):
+            # Maybe transposed
+            if A.shape == (n_t, n_nu):
+                A = A.T
+            else:
+                raise ValueError(
+                    f"[plot_spectra] unexpected 2D total shape {A.shape}; "
+                    f"expected ({n_nu}, {n_t}) or ({n_t}, {n_nu})"
+                )
+    else:
+        raise ValueError(f"[plot_spectra] unexpected ndim={A.ndim} for total")
 
     plt.figure()
-    for tj in epochs:
-        # Model spectrum at this epoch
-        grid = model.flux(t=np.array([tj]),
-                          nu_min=nu_min, nu_max=nu_max,
-                          num_nu=nu_grid.size)
-        y = robust_total_to_curve(grid.total, expect_len=nu_grid.size)
+    for j, tj in enumerate(epochs_arr):
+        y = np.asarray(A[:, j], float)
+        m_mod = np.isfinite(y) & (y > 0.0)
+        if not np.any(m_mod):
+            print(f"[plot_spectra] Epoch t={tj:.3g} s has no positive model flux; skipping.")
+            continue
 
-        # Draw model line and grab its color
-        (line,) = plt.loglog(nu_grid, y, lw=1.8, label=f"t = {tj:.3g} s")
+        (line,) = plt.loglog(nu_grid[m_mod], y[m_mod],
+                             lw=1.8, label=f"t = {tj:.3g} s")
         col = line.get_color()
 
         # Data within ~20% in time, same color
-        m = (t > tj / 1.2) & (t < tj * 1.2)
-        if np.any(m):
+        m_data = (t > tj / 1.2) & (t < tj * 1.2)
+        m_data &= np.isfinite(f) & np.isfinite(e) & (e > 0.0)
+        if np.any(m_data):
             plt.errorbar(
-                nu[m], f[m], yerr=e[m],
+                nu[m_data], f[m_data], yerr=e[m_data],
                 fmt="o", ms=4, capsize=2,
                 color=col, ecolor=col, markeredgecolor=col,
                 linestyle="none",
@@ -482,10 +687,14 @@ def plot_spectra(model, t, nu, f, e, outpath):
 
     plt.xlabel("Frequency [Hz]")
     plt.ylabel("Flux density [erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$]")
-    plt.legend(loc="best", fontsize=8)
+    handles, labels = plt.gca().get_legend_handles_labels()
+    if labels:
+        plt.legend(loc="best", fontsize=8)
+
     os.makedirs(os.path.dirname(outpath), exist_ok=True)
     plt.tight_layout()
     plt.savefig(outpath, dpi=200)
+    print(f"[plot_spectra] Saved plot to {outpath}")
     plt.show()
     plt.close()
 
@@ -500,7 +709,8 @@ def print_parameters(theta, names=PARAM_NAMES, header="Parameters"):
 
 def apply_dylan_priors(data: Dict[str, Any],
                        theta0_default: np.ndarray,
-                       bounds_default: Dict[str, Tuple[float, float]]
+                       bounds_default: Dict[str, Tuple[float, float]],
+                       cfg: FitConfig
                       ) -> Tuple[np.ndarray, Dict[str, Tuple[float, float]]]:
     """
     Interpret Dylan's JetFit-style `parameters.toml` and map onto
@@ -527,7 +737,6 @@ def apply_dylan_priors(data: Dict[str, Any],
         if name_va in bounds:
             bounds[name_va] = (float(lo), float(hi))
             # do not track bounds updates unless you want to display them too
-
     for m in models:
         mname = m.get("name")
         scale = str(m.get("scale", "linear")).lower()
@@ -536,55 +745,37 @@ def apply_dylan_priors(data: Dict[str, Any],
         upper = prior.get("upper")
         ig    = prior.get("initial_guess")
 
+        # --- EXISTING mappings: E, nt, rt, eps_e, eps_b, p, rho0, etc. ---
+
         if mname == "E":  # log10(E_iso/1e52)
-            if ig is not None:
-                set_param("E_iso", 10.0**float(ig) * 1e52)
-            if lower is not None and upper is not None:
-                set_bounds("E_iso", 10.0**float(lower)*1e52, 10.0**float(upper)*1e52)
-
-        elif mname == "nt":  # log10_n_t
-            if ig is not None:
-                set_param("log10_n_t", float(ig))
-            if lower is not None and upper is not None:
-                set_bounds("log10_n_t", float(lower), float(upper))
-
-        elif mname == "rt":  # 10^rt cm
-            if ig is not None:
-                set_param("R_t", 10.0**float(ig))
-            if lower is not None and upper is not None:
-                set_bounds("R_t", 10.0**float(lower), 10.0**float(upper))
-
+            ...
+        elif mname == "nt":
+            ...
+        elif mname == "rt":
+            ...
         elif mname == "eps_e":
-            if ig is not None:
-                val = 10.0**float(ig) if scale == "log" else float(ig)
-                set_param("eps_e", val)
-            if lower is not None and upper is not None:
-                if scale == "log":
-                    set_bounds("eps_e", 10.0**float(lower), 10.0**float(upper))
-                else:
-                    set_bounds("eps_e", float(lower), float(upper))
-
+            ...
         elif mname == "eps_b":
-            if ig is not None:
-                val = 10.0**float(ig) if scale == "log" else float(ig)
-                set_param("eps_B", val)
-            if lower is not None and upper is not None:
-                if scale == "log":
-                    set_bounds("eps_B", 10.0**float(lower), 10.0**float(upper))
-                else:
-                    set_bounds("eps_B", float(lower), float(upper))
-
+            ...
         elif mname == "p":
-            if ig is not None:
-                set_param("p", float(ig))
-            if lower is not None and upper is not None:
-                set_bounds("p", float(lower), float(upper))
-
+            ...
+        # --- NEW: cosmology from Dylan's file ---
+        elif mname == "z":
+            # Dylan's file has: name = "z", value = 1.1
+            if "value" in m:
+                cfg.z = float(m["value"])
+        elif mname == "dL":
+            # JetFit typically uses dL in units of 1e28 cm.
+            # For GRB="080413B": dL = 2.36 → 2.36 × 10^28 cm
+            if "value" in m:
+                cfg.lumi_dist = float(m["value"]) * 1.0e28
+        # ---------------------------------------
         elif mname == "rho0":  # some FireballModel files
             if ig is not None:
                 set_param("log10_n_ism", float(ig))
             if lower is not None and upper is not None:
                 set_bounds("log10_n_ism", float(lower), float(upper))
+
 
     # ------- Print only the updated parameters --------
     print("\n[apply_dylan_priors] Using Dylan's priors for:")
@@ -601,33 +792,54 @@ def apply_dylan_priors(data: Dict[str, Any],
 
 # ---------- main ----------
 def main():
+    global GRB_NAME
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--data",
-        default="/Users/jkeohane/GRBs/GRB_Wind_Bubbles/Data/080413B/080413B.csv"
+        default="Data/"+GRB_NAME+"/"+GRB_NAME+".csv",
+        help="Path to data CSV file",
+    )
+    ap.add_argument(
+        "--grb",
+        default=GRB_NAME,
+        help="Path to data CSV file",
     )
     ap.add_argument(
         "--priors_in",
         default=None,
-        help="TOML file with bounds/priors/init to read (default: parameters.toml next to --data)"
+        help="TOML file with bounds/priors/init to read (default: parameters.toml next to --data)",
     )
     ap.add_argument(
         "--priors_out",
-        default="fit_results.toml",
-        help="TOML file to write best+priors"
+        default=None,
+        help="TOML file to write best+priors (default: "+GRB_NAME+"_fit_results.toml next to --data)",
+    )
+    ap.add_argument(
+        "--no_mcmc",
+        action="store_true",
+        help="Only plot prior model over data, do not run emcee",
     )
     args = ap.parse_args()
 
-    # ----- NEW: auto-detect parameters.toml next to the data file -----
-    if args.priors_in is None:
-        data_dir = os.path.dirname(args.data)
-        auto_toml = os.path.join(data_dir, "parameters.toml")
-        if os.path.exists(auto_toml):
-            args.priors_in = auto_toml
-            print(f"Auto-detected priors file: {args.priors_in}")
-        else:
-            print("No parameters.toml found next to data file.  Using built-in defaults.")
-    # ------------------------------------------------------------------
+    GRB_NAME = str(args.grb)
+    print(f"GRB NAME: {GRB_NAME}")
+
+    # ----- auto-detect priors: prefer our own fit_results.toml over parameters.toml -----
+    data_dir = os.path.dirname(args.data)
+    print(f"data_dir: {data_dir}")
+    fit_toml = data_dir+"/"+GRB_NAME+"_fit_results.toml"
+    print(fit_toml)
+
+    if os.path.exists(fit_toml):
+        args.priors_in = fit_toml
+        print(f"Auto-detected priors file from previous fit: {args.priors_in}")
+    elif os.path.exists(dylan_toml):
+        args.priors_in = dylan_toml
+        print(f"Auto-detected Dylan priors file: {args.priors_in}")
+    else:
+        print("No fit_results.toml or parameters.toml found.  Using built-in defaults.")
+
+    # ------------------------------------------------------------------------------
 
     print(f"Reading data: {args.data}")
     t, nu, f, e = load_080413_schema(args.data)
@@ -635,17 +847,26 @@ def main():
     print(f"Parsed rows: {t.size}  |  Binned rows: {tb.size}")
 
     # Defaults
-    # PARAM_NAMES = ["E_iso","Gamma0","theta_c","eps_e","eps_B","p","R_t","log10_n_t","log10_n_ism"]
     theta0 = np.array([2.0e52, 300.0, 0.10, 1.0e-1, 1.0e-3, 2.30, 1.0e17, 0.0, -2.0], float)
     print_parameters(theta0, names=PARAM_NAMES, header="Default Parameters")
     cfg = FitConfig()
     bounds_map = dict(DEFAULT_BOUNDS)
     normal_map: Dict[str, Tuple[float, float]] = {}
 
-    # Load priors if provided (now possibly auto-detected)
+    # ----- Load priors if provided (possibly auto-detected) -----
     if args.priors_in and os.path.exists(args.priors_in):
         print(f"Reading priors from: {args.priors_in}")
         data = load_priors_toml(args.priors_in)
+
+        # --- NEW: read cosmology from meta if present ---
+        meta = data.get("meta", {})
+        if "z" in meta:
+            cfg.z = float(meta["z"])
+            print("z=", cfg.z)
+        if "lumi_dist_cm" in meta:
+            cfg.lumi_dist = float(meta["lumi_dist_cm"])
+            print("lumi_dist=", cfg.lumi_dist)
+        # ------------------------------------------------
 
         # For *our* own fit_results.toml format (with [bounds], [priors], [init]/[best])
         bounds_map = extract_bounds_from_toml(data, defaults=bounds_map)
@@ -654,28 +875,121 @@ def main():
 
         # For Dylan's JetFit-style format
         if "model" in data:
-            theta0, bounds_map = apply_dylan_priors(data, theta0, bounds_map)
+            theta0, bounds_map = apply_dylan_priors(data, theta0, bounds_map, cfg)
 
         print_parameters(theta0, names=PARAM_NAMES, header="Prior Parameters")
+
     else:
         print(f"Could not read priors from: {args.priors_in}.  Using default values.")
 
+    # ---------- PRIOR model debug plots ----------
+    model_prior = build_model(theta0, cfg)
 
-    best, chain, lnps = run_emcee(tb, nub, fb, eb, theta0, cfg, bounds_map, normal_map)
+    outdir = os.path.join(os.path.dirname(__file__), "Data/"+GRB_NAME)
+    os.makedirs(outdir, exist_ok=True)
 
-    print("\\nBest-fit parameters (max posterior):")
-    for name,val in zip(PARAM_NAMES, best[:9]): print(f"  {name:12s} = {val:.6g}")
+    print("THETA0_START", theta0)
 
-    model=build_model(best,cfg)
-    outdir=os.path.join(os.path.dirname(__file__),"assets"); os.makedirs(outdir,exist_ok=True)
-    plot_lightcurves(model, tb, nub, fb, eb, os.path.join(outdir,"lightcurves_speed.png"))
-    plot_spectra(model, tb, nub, fb, eb, os.path.join(outdir,"spectra_speed.png"))
+    print("\nPlotting PRIOR model over binned data")
+    plot_lightcurves(
+        model_prior,
+        tb, nub, fb, eb,
+        os.path.join(outdir, "lightcurves_prior.png"),
+        cfg,
+    )
 
-    # Save priors/results for the next run
-    if args.priors_out:
-        out_path = os.path.abspath(args.priors_out)
-        save_results_toml(out_path, best, chain, bounds_map, normal_map, cfg)
-        print(f"Saved priors/results to: {out_path}")
+    # Spectra are optional for debug: never crash if they misbehave.
+    # try:
+    #     plot_spectra(
+    #         model_prior,
+    #         tb, nub, fb, eb,
+    #         os.path.join(outdir, "spectra_prior.png"),
+    #     )
+    # except Exception as err:
+    #     print(f"[plot_spectra] Could not plot PRIOR spectra: {err}")
+
+    if args.no_mcmc:
+        print("Skipping emcee (--no_mcmc set).")
+        return
+
+    # ---------------------------------------------
+
+    # ---------- Run emcee (with optional resume) ----------
+    npz_filename = os.path.join(outdir, GRB_NAME + "_fit_results.npz")
+    state_filename = os.path.join(outdir, GRB_NAME + "_emcee_state.pkl")
+
+    if PLOT_ONLY:
+        print("\nReading file " + npz_filename + "  -- not fitting data because PLOT_ONLY is True")
+        data = np.load(npz_filename)
+        best = data["best"]  # (ndim,)
+        chain = data["chain"]  # (nwalkers, nsteps, ndim)
+        lnps = data["lnps"]  # (nwalkers, nsteps)
+
+    else:
+        # Optional resume
+        state0 = None
+        chain0 = None
+        lnps0 = None
+
+        if os.path.exists(npz_filename) and os.path.exists(state_filename):
+            print("\nResuming emcee from previous state.")
+            data = np.load(npz_filename)
+            chain0 = data["chain"]
+            lnps0 = data["lnps"]
+            with open(state_filename, "rb") as f:
+                state0 = pickle.load(f)
+            resume = True
+        else:
+            resume = False
+
+        print("\nRunning emcee.")
+        best, chain, lnps, state = run_emcee(
+            tb, nub, fb, eb,
+            theta0,
+            cfg,
+            bounds_map,
+            normal_map,
+            state0=state0,
+            chain0=chain0,
+            lnps0=lnps0,
+            resume=resume,
+        )
+        print("\nDone running emcee. -- PLOT_ONLY is False")
+
+        print("\nWriting emcee results into file " + npz_filename + ".")
+        np.savez(
+            npz_filename,
+            best=best,
+            chain=chain,
+            lnps=lnps,
+        )
+
+        print("Writing emcee state into file " + state_filename + ".")
+        with open(state_filename, "wb") as f:
+            pickle.dump(state, f)
+
+    print("\nBest-fit parameters (max posterior):")
+    print_parameters(best, names=PARAM_NAMES, header="Best-fit parameters (max posterior)")
+    # --------------------------------
+
+    # ---------- Save results before plotting ----------
+    out_path = outdir+"/"+GRB_NAME+"_fit_results.toml"
+    save_results_toml(out_path, best, chain, bounds_map, normal_map, cfg)
+    print(f"Saved priors/results to: {out_path}")
+    # -------------------------------------------------
+    print("theta0 at start:", theta0)
+    print("best at end:", best)
+
+    # ---------- Best-fit plots ----------
+    model_best = build_model(best, cfg)
+
+    plot_lightcurves(
+        model_best, tb, nub, fb, eb,
+        os.path.join(outdir, "lightcurves_speed.png"), cfg
+    )
+
+
+    print("BEST_END", best)
 
 if __name__=="__main__":
     try: main()
