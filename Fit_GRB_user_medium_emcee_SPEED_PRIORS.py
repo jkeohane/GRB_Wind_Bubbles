@@ -45,7 +45,7 @@ REL_FREQ_GROUP = 1e-3
 MINIMUM_TIME = 5E2 # seconds
 PARAM_NAMES = ["E_iso","Gamma0","theta_c","eps_e","eps_B",
                "p","R_t","log10_n_t","log10_n_ism"]
-PLOT_ONLY = False
+PLOT_ONLY = True
 GRB_NAME = "080413B"
 
 # ---------- config ----------
@@ -527,13 +527,11 @@ def plot_lightcurves(model, t, nu, f, e, outpath, cfg: FitConfig):
     groups = group_by_frequency(nu)
 
     # Time grid for the model curves
-    tmin, tmax = float(np.nanmin(t)), float(np.nanmax(t))
-    try:
-        tmin = float(MINIMUM_TIME)
+    tmin, tmax = float(MINIMUM_TIME), float(np.nanmax(t))
     t_grid = np.logspace(
-        np.log10(max(tmin, 100)),
-        np.log10(tmax * 1.2),
-        300,
+    np.log10(max(tmin, 100)),
+    np.log10(tmax * 1.2),
+    300,
     )
 
     plt.figure()
