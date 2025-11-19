@@ -45,8 +45,10 @@ REL_FREQ_GROUP = 1e-3
 MINIMUM_TIME = 5E2 # seconds
 PARAM_NAMES = ["E_iso","Gamma0","theta_c","eps_e","eps_B",
                "p","R_t","log10_n_t","log10_n_ism"]
-PLOT_ONLY = True
-GRB_NAME = "080413B"
+
+GRB_NAME = "250129A"
+PLOT_ONLY = False
+REBURN_ON_RESUME = True
 
 # ---------- config ----------
 @dataclass
@@ -57,8 +59,8 @@ class FitConfig:
     mu: float = 1.3
     num_nu_grid: int = 32
     nwalkers: int = 128
-    nsteps: int = 3000
-    burn: int = 1000
+    nsteps: int = 300
+    burn: int = 100
     seed: int = 1234
 
 DEFAULT_BOUNDS = {
@@ -449,17 +451,29 @@ def init_walkers(theta0, nwalkers, rng, bounds_map):
 
 def run_emcee(t, nu, f, e, theta0, cfg: FitConfig,
               bounds_map, normal_map,
-              state0=None, chain0=None, lnps0=None, resume=False):
+              state0=None, chain0=None, lnps0=None,
+              resume: bool = False,
+              reburn: bool = False):
     """
     Run or resume an emcee EnsembleSampler.
 
-    If resume == False:
-        - Initialize walkers around theta0
-        - Run burn-in, reset, then production run of cfg.nsteps.
+    Cases:
 
-    If resume == True and state0 is not None:
-        - Start from saved sampler.State and take another cfg.nsteps.
-        - If chain0/lnps0 are provided, append new samples onto them.
+      1) resume == False:
+         - Initialize walkers around theta0
+         - Run burn-in (cfg.burn), reset, then production (cfg.nsteps).
+
+      2) resume == True and reburn == False and state0 is not None:
+         - Continue from saved sampler.State for another cfg.nsteps.
+         - If chain0/lnps0 are provided and compatible, append new samples.
+           Otherwise, use only the new segment.
+
+      3) resume == True and reburn == True and state0 is not None:
+         - Use saved sampler.State as the starting configuration.
+         - Run a burn-in from that state for cfg.burn steps.
+         - Reset the sampler.
+         - Run a fresh production chain of cfg.nsteps steps.
+         - Old chain0/lnps0 are ignored in this mode.
 
     Returns:
         best       : (ndim,) best-fit parameters (max log-posterior)
@@ -472,7 +486,6 @@ def run_emcee(t, nu, f, e, theta0, cfg: FitConfig,
     if cfg.nwalkers < 2 * ndim:
         raise ValueError("nwalkers too small")
 
-    # New sampler every time (state object carries coords & RNG)
     sampler = emcee.EnsembleSampler(
         cfg.nwalkers,
         ndim,
@@ -481,24 +494,45 @@ def run_emcee(t, nu, f, e, theta0, cfg: FitConfig,
         moves=emcee.moves.StretchMove(a=1.8),
     )
 
-    if resume and (state0 is not None):
-        print("[run_emcee] Resuming from saved state.")
-        # Continue chain from state0
+    # ---------- Case 2: resume, continue chain (no reburn) ----------
+    if resume and (state0 is not None) and not reburn:
+        print("[run_emcee] Resuming from saved state (continuing chain).")
         state = sampler.run_mcmc(state0, cfg.nsteps, progress=True)
         new_chain = sampler.get_chain()
         new_lnps  = sampler.get_log_prob()
 
         if (chain0 is not None) and (lnps0 is not None):
-            # Append in time (axis=1)
-            if chain0.shape[0] != new_chain.shape[0] or chain0.shape[2] != new_chain.shape[2]:
-                raise ValueError("Saved chain does not match current sampler dimensions.")
-            chain_all = np.concatenate([chain0, new_chain], axis=1)
-            lnps_all  = np.concatenate([lnps0,  new_lnps],  axis=1)
+            # Only append if shapes really match
+            if (chain0.shape[0] == new_chain.shape[0]) and (chain0.shape[2] == new_chain.shape[2]):
+                chain_all = np.concatenate([chain0, new_chain], axis=1)
+                lnps_all  = np.concatenate([lnps0,  new_lnps],  axis=1)
+            else:
+                print("[run_emcee] Saved chain dims do not match new chain; using only new segment.")
+                chain_all = new_chain
+                lnps_all  = new_lnps
         else:
             chain_all = new_chain
             lnps_all  = new_lnps
 
+    # ---------- Case 3: resume with reburn ----------
+    elif resume and (state0 is not None) and reburn:
+        print("[run_emcee] Resuming from saved state and redoing burn-in.")
+        # Use saved state as starting point for a new burn-in
+        state = sampler.run_mcmc(state0, cfg.burn, progress=True)
+        sampler.reset()  # discard burn-in samples
+        state = sampler.run_mcmc(state, cfg.nsteps, progress=True)
+        chain_all = sampler.get_chain()
+        lnps_all  = sampler.get_log_prob()
+
+    # ---------- Case 1: completely fresh run ----------
     else:
+        if resume and state0 is None:
+            print("[run_emcee] resume=True but no state0 provided; starting fresh chain.")
+        elif resume and not reburn:
+            print("[run_emcee] resume=True but state0 invalid; starting fresh chain.")
+        elif resume and reburn and state0 is None:
+            print("[run_emcee] reburn requested but no state0; starting fresh chain.")
+
         print("[run_emcee] Starting fresh chain.")
         p0 = init_walkers(theta0, cfg.nwalkers, rng, bounds_map)
         state = sampler.run_mcmc(p0, cfg.burn, progress=True)
@@ -507,13 +541,14 @@ def run_emcee(t, nu, f, e, theta0, cfg: FitConfig,
         chain_all = sampler.get_chain()
         lnps_all  = sampler.get_log_prob()
 
-    # Best point over entire chain
+    # ---------- Compute best point ----------
     flat_chain = chain_all.reshape(-1, ndim)
     flat_lnps  = lnps_all.reshape(-1)
     ibest = int(np.argmax(flat_lnps))
     best = flat_chain[ibest, :]
 
     return best, chain_all, lnps_all, state
+
 
 # ---------- plotting ----------
 def plot_lightcurves(model, t, nu, f, e, outpath, cfg: FitConfig):
@@ -705,21 +740,34 @@ def print_parameters(theta, names=PARAM_NAMES, header="Parameters"):
         print(f"  {name:12s} = {val:.6g}")
     print()
 
-def apply_dylan_priors(data: Dict[str, Any],
-                       theta0_default: np.ndarray,
-                       bounds_default: Dict[str, Tuple[float, float]],
-                       cfg: FitConfig
-                      ) -> Tuple[np.ndarray, Dict[str, Tuple[float, float]]]:
+from typing import Any, Dict, Tuple
+import numpy as np
+
+def apply_dylan_priors(
+    data: Dict[str, Any],
+    theta0_default: np.ndarray,
+    bounds_default: Dict[str, Tuple[float, float]],
+    cfg: FitConfig,
+) -> Tuple[np.ndarray, Dict[str, Tuple[float, float]]]:
     """
     Interpret Dylan's JetFit-style `parameters.toml` and map onto
     VegasAfterglow parameters.
 
     Returns:
       (theta, bounds), and prints only those parameters provided in Dylan's file.
+
+    Side effect:
+      Stores extra parameters (like z, dL, etc.) into `cfg.extra_params`.
     """
+
     theta = theta0_default.copy()
     bounds = dict(bounds_default)
-    updated_params = []  # <-- track what changed
+    updated_params = []  # track what changed
+
+    # Create a place to stash extra parameters if it does not already exist.
+    if not hasattr(cfg, "extra_params"):
+        cfg.extra_params = {}
+    extra = cfg.extra_params  # shorthand
 
     models = data.get("model", [])
     if not isinstance(models, list):
@@ -734,7 +782,7 @@ def apply_dylan_priors(data: Dict[str, Any],
     def set_bounds(name_va: str, lo: float, hi: float):
         if name_va in bounds:
             bounds[name_va] = (float(lo), float(hi))
-            # do not track bounds updates unless you want to display them too
+
     for m in models:
         mname = m.get("name")
         scale = str(m.get("scale", "linear")).lower()
@@ -743,37 +791,74 @@ def apply_dylan_priors(data: Dict[str, Any],
         upper = prior.get("upper")
         ig    = prior.get("initial_guess")
 
-        # --- EXISTING mappings: E, nt, rt, eps_e, eps_b, p, rho0, etc. ---
+        # --- EXAMPLES of existing mappings: adjust to your actual PARAM_NAMES ---
 
-        if mname == "E":  # log10(E_iso/1e52)
-            ...
-        elif mname == "nt":
-            ...
-        elif mname == "rt":
-            ...
+        if mname == "E":  # example: log10(E_iso / 1e52) prior
+            if ig is not None:
+                set_param("log10_E_iso_52", float(ig))
+            if lower is not None and upper is not None:
+                set_bounds("log10_E_iso_52", float(lower), float(upper))
+
+        elif mname == "nt":  # example ambient density
+            if ig is not None:
+                set_param("log10_n_ism", float(ig))
+            if lower is not None and upper is not None:
+                set_bounds("log10_n_ism", float(lower), float(upper))
+
+        elif mname == "rt":  # example termination radius
+            if ig is not None:
+                set_param("log10_R_t_cm", float(ig))
+            if lower is not None and upper is not None:
+                set_bounds("log10_R_t_cm", float(lower), float(upper))
+
         elif mname == "eps_e":
-            ...
+            if ig is not None:
+                set_param("log10_eps_e", float(ig))
+            if lower is not None and upper is not None:
+                set_bounds("log10_eps_e", float(lower), float(upper))
+
         elif mname == "eps_b":
-            ...
+            if ig is not None:
+                set_param("log10_eps_B", float(ig))
+            if lower is not None and upper is not None:
+                set_bounds("log10_eps_B", float(lower), float(upper))
+
         elif mname == "p":
-            ...
-        # --- NEW: cosmology from Dylan's file ---
+            if ig is not None:
+                set_param("p", float(ig))
+            if lower is not None and upper is not None:
+                set_bounds("p", float(lower), float(upper))
+
+        # --- Cosmological pieces / “other parameters” that you want to keep ---
+
         elif mname == "z":
-            # Dylan's file has: name = "z", value = 1.1
+            # Dylan's file typically has: name = "z", value = <redshift>
             if "value" in m:
-                cfg.z = float(m["value"])
+                z_val = float(m["value"])
+                cfg.z = z_val
+                extra["z"] = z_val  # keep a record for later
+
         elif mname == "dL":
-            # JetFit typically uses dL in units of 1e28 cm.
-            # For GRB="080413B": dL = 2.36 → 2.36 × 10^28 cm
+            # JetFit often uses dL in units of 1e28 cm.
+            # Example: dL = 2.36  →  2.36 × 10^28 cm
             if "value" in m:
-                cfg.lumi_dist = float(m["value"]) * 1.0e28
-        # ---------------------------------------
+                dL_factor = float(m["value"])
+                dL_cm = dL_factor * 1.0e28
+                cfg.lumi_dist = dL_cm
+                extra["dL_1e28"] = dL_factor
+                extra["dL_cm"]   = dL_cm
+
         elif mname == "rho0":  # some FireballModel files
             if ig is not None:
                 set_param("log10_n_ism", float(ig))
             if lower is not None and upper is not None:
                 set_bounds("log10_n_ism", float(lower), float(upper))
 
+        else:
+            # Anything you do not explicitly handle, you can keep for later inspection.
+            # For example, store the whole entry in a list of "unmapped" parameters.
+            unmapped = extra.setdefault("unmapped_model_params", [])
+            unmapped.append(m)
 
     # ------- Print only the updated parameters --------
     print("\n[apply_dylan_priors] Using Dylan's priors for:")
@@ -786,6 +871,138 @@ def apply_dylan_priors(data: Dict[str, Any],
 
     return theta, bounds
 
+def pretty_print(obj, indent=0):
+    """
+    Recursively pretty-print any combination of dicts, lists, and values.
+    """
+    spacing = "  " * indent
+
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            print(f"{spacing}{key}:")
+            pretty_print(value, indent + 1)
+
+    elif isinstance(obj, list):
+        for idx, item in enumerate(obj):
+            print(f"{spacing}-")
+            pretty_print(item, indent + 1)
+
+    else:
+        # Any leaf value (str, int, float, None, bool)
+        print(f"{spacing}{obj}")
+
+
+
+def pretty_print_yaml(obj, indent=0):
+    spacing = "  " * indent
+
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            print(f"{spacing}{key}:")
+            pretty_print_yaml(value, indent + 1)
+
+    elif isinstance(obj, list):
+        for item in obj:
+            print(f"{spacing}- ", end="")
+            if isinstance(item, (dict, list)):
+                print()
+                pretty_print_yaml(item, indent + 1)
+            else:
+                print(item)
+
+    else:
+        print(f"{spacing}{obj}")
+
+def _toml_format_value(v):
+    """Format a Python value in a TOML-like way."""
+    if isinstance(v, str):
+        return f'"{v}"'
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if v is None:
+        # TOML has no null, but this is useful for debugging
+        return "null"
+    return repr(v)
+
+
+def _toml_dump_section(obj, path, in_array, lines):
+    """
+    Recursively dump a dict as TOML-like text.
+
+    path: list of section name components
+    in_array: if True, do not emit a new [section] header (for array-of-tables items)
+    lines: list of strings to append to
+    """
+    if not isinstance(obj, dict):
+        raise TypeError("TOML section must be a dict")
+
+    # Emit [section] header unless this is the root or we are inside an array-of-tables item
+    if path and not in_array:
+        section_name = ".".join(path)
+        lines.append(f"[{section_name}]")
+
+    # Split keys by type: scalars, dicts, lists
+    scalars = {}
+    dicts = {}
+    lists = {}
+
+    for key, value in obj.items():
+        if isinstance(value, dict):
+            dicts[key] = value
+        elif isinstance(value, list):
+            lists[key] = value
+        else:
+            scalars[key] = value
+
+    # First write scalar keys in this section
+    for key, value in scalars.items():
+        lines.append(f"{key} = {_toml_format_value(value)}")
+
+    if scalars and (dicts or lists):
+        lines.append("")  # blank line between scalars and children
+
+    # Then nested dicts: become child sections
+    for key, value in dicts.items():
+        _toml_dump_section(value, path + [key], in_array=False, lines=lines)
+        lines.append("")
+
+    # Then lists: either arrays of tables, or scalar arrays
+    for key, value in lists.items():
+        if value and all(isinstance(item, dict) for item in value):
+            # Array of tables: [[section.key]]
+            section_name = ".".join(path + [key])
+            for item in value:
+                lines.append(f"[[{section_name}]]")
+                _toml_dump_section(item, path + [key], in_array=True, lines=lines)
+                lines.append("")
+        else:
+            # List of scalars (or empty list)
+            items = ", ".join(_toml_format_value(x) for x in value)
+            lines.append(f"{key} = [{items}]")
+
+
+def dict_to_toml_like(obj):
+    """
+    Convert an arbitrary nested dict/list structure to TOML-like text.
+    Returns a single string.
+    """
+    lines = []
+    if not isinstance(obj, dict):
+        # Wrap non-dicts so that we always have a dict at the top level
+        obj = {"value": obj}
+
+    _toml_dump_section(obj, path=[], in_array=False, lines=lines)
+
+    # Strip trailing blank lines
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    return "\n".join(lines)
+
+
+def print_toml_like(obj):
+    """Convenience wrapper that prints the TOML-like text."""
+    print(dict_to_toml_like(obj))
 
 
 # ---------- main ----------
@@ -793,54 +1010,31 @@ def main():
     global GRB_NAME
     ap = argparse.ArgumentParser()
     ap.add_argument(
-        "--data",
-        default="Data/"+GRB_NAME+"/"+GRB_NAME+".csv",
-        help="Path to data CSV file",
-    )
-    ap.add_argument(
         "--grb",
         default=GRB_NAME,
         help="Path to data CSV file",
     )
-    ap.add_argument(
-        "--priors_in",
-        default=None,
-        help="TOML file with bounds/priors/init to read (default: parameters.toml next to --data)",
-    )
-    ap.add_argument(
-        "--priors_out",
-        default=None,
-        help="TOML file to write best+priors (default: "+GRB_NAME+"_fit_results.toml next to --data)",
-    )
-    ap.add_argument(
-        "--no_mcmc",
-        action="store_true",
-        help="Only plot prior model over data, do not run emcee",
-    )
     args = ap.parse_args()
-
     GRB_NAME = str(args.grb)
     print(f"GRB NAME: {GRB_NAME}")
-
     # ----- auto-detect priors: prefer our own fit_results.toml over parameters.toml -----
-    data_dir = os.path.dirname(args.data)
+    data_dir = "Data/"+GRB_NAME
     print(f"data_dir: {data_dir}")
     fit_toml = data_dir+"/"+GRB_NAME+"_fit_results.toml"
     print(fit_toml)
-
-    if os.path.exists(fit_toml):
-        args.priors_in = fit_toml
-        print(f"Auto-detected priors file from previous fit: {args.priors_in}")
-    elif os.path.exists(dylan_toml):
-        args.priors_in = dylan_toml
-        print(f"Auto-detected Dylan priors file: {args.priors_in}")
-    else:
-        print("No fit_results.toml or parameters.toml found.  Using built-in defaults.")
+    dylan_toml = data_dir + "/parameters.toml"
+    print(dylan_toml)
+    csv_path = data_dir +"/"+GRB_NAME+".csv"
+    print(csv_path)
+    npz_filename = os.path.join(data_dir, GRB_NAME + "_fit_results.npz")
+    print(npz_filename)
+    state_filename = os.path.join(data_dir, GRB_NAME + "_emcee_state.pkl")
+    print(state_filename)
 
     # ------------------------------------------------------------------------------
 
-    print(f"Reading data: {args.data}")
-    t, nu, f, e = load_080413_schema(args.data)
+    print(f"Reading data: {csv_path}")
+    t, nu, f, e = load_080413_schema(csv_path)
     tb, nub, fb, eb = bin_data(t, nu, f, e)
     print(f"Parsed rows: {t.size}  |  Binned rows: {tb.size}")
 
@@ -851,70 +1045,73 @@ def main():
     bounds_map = dict(DEFAULT_BOUNDS)
     normal_map: Dict[str, Tuple[float, float]] = {}
 
-    # ----- Load priors if provided (possibly auto-detected) -----
-    if args.priors_in and os.path.exists(args.priors_in):
-        print(f"Reading priors from: {args.priors_in}")
-        data = load_priors_toml(args.priors_in)
+    # ----- Load priors from Dylan's parameter file if exists -----
+# I NEED TO READ ALL THE PARAMETERS FROM PARAMETERS.TOML HERE INCLUDING Z AND TO OTHERS THAT ARE NOT FIT BY ME HERE.
+    if os.path.exists(dylan_toml):
+        print(f"Auto-detected Dylan priors file from previous fit: {dylan_toml}")
+        print(f"Reading priors from: {dylan_toml}")
+        data = load_priors_toml(dylan_toml)
+        theta0, bounds_map = apply_dylan_priors(data, theta0, bounds_map, cfg)
+        print_parameters(theta0, names=PARAM_NAMES, header="Prior Parameters")
+        print_toml_like(data)
 
-        # --- NEW: read cosmology from meta if present ---
-        meta = data.get("meta", {})
+    if os.path.exists(fit_toml):
+        print(f"Auto-detected last fit file: {fit_toml}")
+        # Read *our* last fit results and overwrite Dylan's values
+        fit_data = load_priors_toml(fit_toml)
+        # --- read cosmology from meta if present ---
+        meta = fit_data.get("meta", {})
         if "z" in meta:
             cfg.z = float(meta["z"])
-            print("z=", cfg.z)
+            print("z =", cfg.z)
         if "lumi_dist_cm" in meta:
             cfg.lumi_dist = float(meta["lumi_dist_cm"])
-            print("lumi_dist=", cfg.lumi_dist)
+            print("lumi_dist =", cfg.lumi_dist)
         # ------------------------------------------------
 
-        # For *our* own fit_results.toml format (with [bounds], [priors], [init]/[best])
-        bounds_map = extract_bounds_from_toml(data, defaults=bounds_map)
-        normal_map = extract_normals_from_toml(data)
-        theta0 = extract_init_from_toml(data, theta0)
+        bounds_map = extract_bounds_from_toml(fit_data, defaults=bounds_map)
+        normal_map = extract_normals_from_toml(fit_data)
+        theta0 = extract_init_from_toml(fit_data, theta0)
 
-        # For Dylan's JetFit-style format
-        if "model" in data:
-            theta0, bounds_map = apply_dylan_priors(data, theta0, bounds_map, cfg)
+        print_toml_like(fit_data)
 
-        print_parameters(theta0, names=PARAM_NAMES, header="Prior Parameters")
 
+    resume_file = data_dir + "/" + GRB_NAME + "_resume.pkl"
+
+    if os.path.exists(resume_file):
+        try:
+            resume_data = pickle.load(open(resume_file, "rb"))
+            state0 = resume_data["state"]
+            chain0 = resume_data["chain"]
+            lnps0 = resume_data["lnps"]
+            theta0 = resume_data["theta0"]
+            bounds_map = resume_data["bounds_map"]
+            normal_map = resume_data["normal_map"]
+            cfg.z = resume_data["cfg_z"]
+            cfg.lumi_dist = resume_data["cfg_lumi_dist"]
+            resume = True
+        except Exception as e:
+            print("Resume file invalid:", e)
+            resume = False
+            state0 = None
+            chain0 = None
+            lnps0 = None
     else:
-        print(f"Could not read priors from: {args.priors_in}.  Using default values.")
+        resume = False
+        state0 = None
+        chain0 = None
+        lnps0 = None
 
     # ---------- PRIOR model debug plots ----------
     model_prior = build_model(theta0, cfg)
-
-    outdir = os.path.join(os.path.dirname(__file__), "Data/"+GRB_NAME)
-    os.makedirs(outdir, exist_ok=True)
-
-    print("THETA0_START", theta0)
 
     print("\nPlotting PRIOR model over binned data")
     plot_lightcurves(
         model_prior,
         tb, nub, fb, eb,
-        os.path.join(outdir, "lightcurves_prior.png"),
+        os.path.join(data_dir, "lightcurves_prior.png"),
         cfg,
     )
-
-    # Spectra are optional for debug: never crash if they misbehave.
-    # try:
-    #     plot_spectra(
-    #         model_prior,
-    #         tb, nub, fb, eb,
-    #         os.path.join(outdir, "spectra_prior.png"),
-    #     )
-    # except Exception as err:
-    #     print(f"[plot_spectra] Could not plot PRIOR spectra: {err}")
-
-    if args.no_mcmc:
-        print("Skipping emcee (--no_mcmc set).")
-        return
-
-    # ---------------------------------------------
-
-    # ---------- Run emcee (with optional resume) ----------
-    npz_filename = os.path.join(outdir, GRB_NAME + "_fit_results.npz")
-    state_filename = os.path.join(outdir, GRB_NAME + "_emcee_state.pkl")
 
     if PLOT_ONLY:
         print("\nReading file " + npz_filename + "  -- not fitting data because PLOT_ONLY is True")
@@ -924,22 +1121,6 @@ def main():
         lnps = data["lnps"]  # (nwalkers, nsteps)
 
     else:
-        # Optional resume
-        state0 = None
-        chain0 = None
-        lnps0 = None
-
-        if os.path.exists(npz_filename) and os.path.exists(state_filename):
-            print("\nResuming emcee from previous state.")
-            data = np.load(npz_filename)
-            chain0 = data["chain"]
-            lnps0 = data["lnps"]
-            with open(state_filename, "rb") as f:
-                state0 = pickle.load(f)
-            resume = True
-        else:
-            resume = False
-
         print("\nRunning emcee.")
         best, chain, lnps, state = run_emcee(
             tb, nub, fb, eb,
@@ -951,43 +1132,45 @@ def main():
             chain0=chain0,
             lnps0=lnps0,
             resume=resume,
+            reburn=REBURN_ON_RESUME
         )
         print("\nDone running emcee. -- PLOT_ONLY is False")
 
-        print("\nWriting emcee results into file " + npz_filename + ".")
-        np.savez(
-            npz_filename,
-            best=best,
-            chain=chain,
-            lnps=lnps,
-        )
+        resume_file = os.path.join(data_dir, GRB_NAME + "_resume.pkl")
+        resume_data = {
+            "state": state,
+            "chain": chain,
+            "lnps": lnps,
+            "theta0": best,
+            "bounds_map": bounds_map,
+            "normal_map": normal_map,
+            "cfg_z": cfg.z,
+            "cfg_lumi_dist": cfg.lumi_dist,
+        }
+        pickle.dump(resume_data, open(resume_file, "wb"))
 
         print("Writing emcee state into file " + state_filename + ".")
         with open(state_filename, "wb") as f:
             pickle.dump(state, f)
 
-    print("\nBest-fit parameters (max posterior):")
-    print_parameters(best, names=PARAM_NAMES, header="Best-fit parameters (max posterior)")
-    # --------------------------------
+        print("\nBest-fit parameters (max posterior):")
+        print_parameters(best, names=PARAM_NAMES, header="Best-fit parameters (max posterior)")
+        # --------------------------------
 
-    # ---------- Save results before plotting ----------
-    out_path = outdir+"/"+GRB_NAME+"_fit_results.toml"
-    save_results_toml(out_path, best, chain, bounds_map, normal_map, cfg)
-    print(f"Saved priors/results to: {out_path}")
-    # -------------------------------------------------
-    print("theta0 at start:", theta0)
-    print("best at end:", best)
+        # ---------- Save results before plotting ----------
+        out_path = data_dir+"/"+GRB_NAME+"_fit_results.toml"
+        save_results_toml(out_path, best, chain, bounds_map, normal_map, cfg)
+        print(f"Saved priors/results to: {out_path}")
+        # -------------------------------------------------
+
 
     # ---------- Best-fit plots ----------
     model_best = build_model(best, cfg)
 
     plot_lightcurves(
         model_best, tb, nub, fb, eb,
-        os.path.join(outdir, "lightcurves_speed.png"), cfg
+        os.path.join(data_dir, "lightcurves_speed.png"), cfg
     )
-
-
-    print("BEST_END", best)
 
 if __name__=="__main__":
     try: main()
