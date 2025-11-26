@@ -42,13 +42,21 @@ UNIT_SCALE = {'jy':1e-23,'mjy':1e-26,'ujy':1e-29,'µjy':1e-29}
 FREQ_SCALE = {'hz':1.0,'khz':1e3,'mhz':1e6,'ghz':1e9,'thz':1e12}
 TIME_BINS_PER_DECADE = 8
 REL_FREQ_GROUP = 1e-3
-MINIMUM_TIME = 5E2 # seconds
+MINIMUM_TIME = 1E2 # seconds
+MAXIMUM_TIME = 1E5 # seconds
 PARAM_NAMES = ["E_iso","Gamma0","theta_c","eps_e","eps_B",
                "p","R_t","log10_n_t","log10_n_ism"]
 
-GRB_NAME = "250129A"
+GRB_NAMES = os.listdir("Data")
+GRB_NAME = "090424"
+if GRB_NAME not in GRB_NAMES:
+    print("GRB_NAME not found")
+    quit()
+
 PLOT_ONLY = False
 REBURN_ON_RESUME = True
+RUN_ALL_GRBS = True
+
 
 # ---------- config ----------
 @dataclass
@@ -59,8 +67,8 @@ class FitConfig:
     mu: float = 1.3
     num_nu_grid: int = 32
     nwalkers: int = 128
-    nsteps: int = 300
-    burn: int = 100
+    nsteps: int = 3000
+    burn: int = 1000
     seed: int = 1234
 
 DEFAULT_BOUNDS = {
@@ -113,7 +121,8 @@ def load_080413_schema(csv_path: str):
         hi_i = hi[i] if isinstance(hi[i], (int,float,np.floating)) else np.nan
         sigs=[s for s in [lo_i,hi_i] if np.isfinite(s) and s>0]
         if sigs: e[i]=max(sigs)*s
-    mask_base = np.isfinite(t)&np.isfinite(nu)&np.isfinite(f)&(nu>1E6)&(t>MINIMUM_TIME)
+    mask_base = np.isfinite(t)&np.isfinite(nu)&np.isfinite(f)&(nu>1E6) \
+                &(t>MINIMUM_TIME)&(t<MAXIMUM_TIME)
     if np.any(~np.isfinite(e)&mask_base):
         idx=np.where(mask_base)[0]
         order=idx[np.argsort(nu[idx])]
@@ -130,7 +139,8 @@ def load_080413_schema(csv_path: str):
                 if not (np.isfinite(e2[k]) and e2[k]>0):
                     e2[k]=med if (med and med>0) else max(1e-6,0.1*abs(f[k]))
         e=e2
-    mask = np.isfinite(t)&np.isfinite(nu)&np.isfinite(f)&np.isfinite(e)&(nu>0)&(e>0)&(t>MINIMUM_TIME)
+    mask = np.isfinite(t)&np.isfinite(nu)&np.isfinite(f)&np.isfinite(e)&(nu>0)&(e>0) \
+           &(t>MINIMUM_TIME)&(t<MAXIMUM_TIME)
     if not np.any(mask): raise ValueError("No valid rows after parsing")
     return t[mask], nu[mask], f[mask], e[mask]
 
@@ -551,67 +561,224 @@ def run_emcee(t, nu, f, e, theta0, cfg: FitConfig,
 
 
 # ---------- plotting ----------
+def plot_density_profile(model, theta, cfg: FitConfig, outpath: str):
+    """
+    Plot the circumstellar density profile ρ(r) for the best–fit model,
+    in the same style as Wind_Bubble_Model.py:
+
+      - Bottom x-axis: radius in pc
+      - Top x-axis: radius in cm
+      - Left y-axis: number density n(r) [cm^-3]
+      - Right y-axis: mass density ρ(r) [g cm^-3]
+
+    Uses model.medium(φ, θ, r) to evaluate the density.
+    Also marks R_t and R_2 from the fitted parameters.
+    """
+    pc_to_cm = 3.086e18
+    m_mol = cfg.mu * mp
+
+    # Radius grid (cm) – same order of magnitude as Wind_Bubble_Model
+    r = np.logspace(16, 20, 600)  # cm
+
+    # Evaluate medium; model.medium(φ, θ, r_array) returns ρ(r) in g/cm^3
+    rho_profile = np.asarray(model.medium(0.0, 0.0, r), dtype=float)
+
+    # Mask out any non-finite or non-positive values
+    mask = np.isfinite(rho_profile) & (rho_profile > 0.0)
+    if not np.any(mask):
+        print("[plot_density_profile] No positive densities found; skipping.")
+        return
+
+    r_plot = r[mask]
+    rho_plot = rho_profile[mask]
+    n_plot = rho_plot / m_mol  # number density [cm^-3]
+
+    # Extract R_t, n_t, n_ism and compute R_2 (shell outer radius)
+    # PARAM_NAMES = ["E_iso","Gamma0","theta_c","eps_e","eps_B",
+    #                "p","R_t","log10_n_t","log10_n_ism"]
+    R_t = float(theta[PARAM_NAMES.index("R_t")])
+    n_t = 10.0**float(theta[PARAM_NAMES.index("log10_n_t")])
+    n_ism = 10.0**float(theta[PARAM_NAMES.index("log10_n_ism")])
+    n_sh = max(4.0 * n_t, 4.0 * n_ism)
+    denom = (n_sh - n_ism)
+    R2 = None
+    if denom > 0.0:
+        R2 = R_t * ((n_sh + 3.0 * n_t) / denom)**(1.0 / 3.0)
+
+    fig, ax1 = plt.subplots(figsize=(5.0, 3.6), dpi=200)
+
+    # Main density curve: n(r) vs r (pc)
+    ax1.loglog(r_plot / pc_to_cm, n_plot, lw=1.8, label="Best-fit medium")
+
+    # Mark R_t and R_2 if they are in range
+    pc_R_t = R_t / pc_to_cm
+    if r_plot.min() < R_t < r_plot.max():
+        ax1.axvline(pc_R_t, ls="--", color="C1", alpha=0.7, label=r"$R_t$")
+    if (R2 is not None) and (r_plot.min() < R2 < r_plot.max()):
+        pc_R2 = R2 / pc_to_cm
+        ax1.axvline(pc_R2, ls=":", color="C2", alpha=0.7, label=r"$R_2$")
+
+    # Labels & title
+    ax1.set_xlabel("Radius (pc)")
+    ax1.set_ylabel(r"$n(r)$ [cm$^{-3}$]")
+    ax1.set_title(f"GRB {GRB_NAME} medium density profile")
+
+    # Legend
+    handles, labels = ax1.get_legend_handles_labels()
+    if labels:
+        ax1.legend(fontsize=7)
+
+    # --- top x-axis: radius in cm ---
+    def pc_to_cm_f(x):
+        return x * pc_to_cm
+
+    def cm_to_pc_f(x):
+        return x / pc_to_cm
+
+    ax2 = ax1.secondary_xaxis("top", functions=(pc_to_cm_f, cm_to_pc_f))
+    ax2.set_xlabel("Radius (cm)")
+
+    # --- right y-axis: ρ(r) in g/cm^3 ---
+    def n_to_rho(y):
+        return y * m_mol
+
+    def rho_to_n(y):
+        return y / m_mol
+
+    ax3 = ax1.secondary_yaxis("right", functions=(n_to_rho, rho_to_n))
+    ax3.set_ylabel(r"$\rho(r)$ [g cm$^{-3}$]")
+
+    os.makedirs(os.path.dirname(outpath), exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(outpath, dpi=300)
+    print(f"[plot_density_profile] Saved plot to {outpath}")
+    plt.show()
+    plt.close()
+
+
+
+# ---------- plotting ----------
 def plot_lightcurves(model, t, nu, f, e, outpath, cfg: FitConfig):
     """
     Plot model light curves + binned data.
 
-    For each frequency group, we construct a time grid, evaluate the
-    model at that (t, nu0) pair using `predict`, then overplot the
-    binned data in the same color.
+    Now:
+      - Left y axis in Jy.
+      - Right y axis in cgs (erg s^-1 cm^-2 Hz^-1).
+      - Bottom x axis in seconds.
+      - Top x axis in days.
+      - Title includes the GRB name.
     """
     groups = group_by_frequency(nu)
+    day = 86400.0
 
     # Time grid for the model curves
-    tmin, tmax = float(MINIMUM_TIME), float(np.nanmax(t))
+    tmin, tmax = min(MINIMUM_TIME,float(np.nanmin(t))), max(MAXIMUM_TIME,float(np.nanmax(t)))
     t_grid = np.logspace(
-    np.log10(max(tmin, 100)),
-    np.log10(tmax * 1.2),
-    300,
+        np.log10(tmin*0.8),
+        np.log10(tmax * 1.2),
+        300,
     )
 
-    plt.figure()
+    fig, ax1 = plt.subplots(figsize=(5.8, 3.8), dpi=200)
 
     for g in groups:
+        # Representative frequency for this group
         nu0 = float(np.median(nu[g]))
+
+        # Nice LaTeX label for the frequency
+        exp = int(np.floor(np.log10(nu0)))
+        base = nu0 / 10.0**exp
+        if np.isclose(base, 1.0):
+            label_nu = rf"$10^{{{exp}}}\,\mathrm{{Hz}}$"
+        else:
+            label_nu = rf"${base:.1f}\times10^{{{exp}}}\,\mathrm{{Hz}}$"
 
         # Frequency array matching t_grid, all at nu0
         nu_vec = np.full_like(t_grid, nu0, dtype=float)
 
-        # Evaluate model using the same machinery as log_like
+        # Evaluate model in cgs
         try:
-            y = predict(model, t_grid, nu_vec, cfg)
+            y_cgs = predict(model, t_grid, nu_vec, cfg)
         except Exception as err:
             print(f"[plot_lightcurves] Failed at nu ≈ {nu0:.3g} Hz: {err}")
             continue
 
-        y = np.asarray(y, float)
+        y_cgs = np.asarray(y_cgs, float)
 
-        # Mask non-finite/nonpositive values for log–log
-        m_mod = np.isfinite(y) & (y > 0.0)
+        # Mask non-finite / nonpositive values
+        m_mod = np.isfinite(y_cgs) & (y_cgs > 0.0)
         n_good = np.count_nonzero(m_mod)
         if n_good == 0:
             print(f"[plot_lightcurves] nu ≈ {nu0:.3g} Hz: no positive model flux; skipping.")
             continue
 
+        # Convert to Jy for plotting on the primary y axis
+        y_jy = y_cgs[m_mod] * 1e23
+
         # Draw model curve and grab its color
-        (line,) = plt.loglog(t_grid[m_mod], y[m_mod],
-                             lw=1.8, label=f"{nu0:.3g} Hz")
+        (line,) = ax1.loglog(
+            t_grid[m_mod],
+            y_jy,
+            lw=1.8,
+            label=label_nu,
+        )
         col = line.get_color()
 
-        # Overplot the binned data in the same color
-        plt.errorbar(
-            t[g], f[g], yerr=e[g],
-            fmt="o", ms=4, capsize=2,
-            color=col, ecolor=col, markeredgecolor=col,
-            linestyle="none",
+        # Overplot the binned data in the same color, also in Jy
+        t_g = t[g]
+        f_g = f[g]
+        e_g = e[g]
+        m_data = (
+            np.isfinite(t_g)
+            & np.isfinite(f_g)
+            & np.isfinite(e_g)
+            & (e_g > 0.0)
+            & (f_g > 0.0)
         )
+        if np.any(m_data):
+            ax1.errorbar(
+                t_g[m_data],
+                f_g[m_data] * 1e23,         # Jy
+                yerr=e_g[m_data] * 1e23,    # Jy
+                fmt="o",
+                ms=4,
+                capsize=2,
+                color=col,
+                ecolor=col,
+                markeredgecolor=col,
+                linestyle="none",
+            )
 
-    plt.xlabel("Time [s]")
-    plt.ylabel("Flux density [erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$]")
+    # Axis labels and title (GRB name)
+    ax1.set_xlabel("Time [s]")
+    ax1.set_ylabel("Flux density [Jy]")
+    ax1.set_title(f"GRB {GRB_NAME} afterglow light curves")
 
-    handles, labels = plt.gca().get_legend_handles_labels()
+    # Legend
+    handles, labels = ax1.get_legend_handles_labels()
     if labels:
-        plt.legend(loc="best", fontsize=8)
+        ax1.legend(loc="best", fontsize=8)
+
+    # Top axis: time in days
+    def s_to_days(x):
+        return x / day
+
+    def days_to_s(x):
+        return x * day
+
+    ax2 = ax1.secondary_xaxis("top", functions=(s_to_days, days_to_s))
+    ax2.set_xlabel("Time [days]")
+
+    # Right y axis: cgs units
+    def Jy_to_cgs(y):
+        return y * 1e-23
+
+    def cgs_to_Jy(y):
+        return y / 1e-23
+
+    ax3 = ax1.secondary_yaxis("right", functions=(Jy_to_cgs, cgs_to_Jy))
+    ax3.set_ylabel(r"Flux density [erg cm$^{-2}$ s$^{-1}$ Hz$^{-1}$]")
 
     os.makedirs(os.path.dirname(outpath), exist_ok=True)
     plt.tight_layout()
@@ -639,41 +806,39 @@ def pick_epochs(t, n=3):
 
 def plot_spectra(model, t, nu, f, e, outpath):
     """
-    Plot model spectra at a few epochs + nearby data.
+    Plot model spectra at several epochs, from radio through X-ray,
+    in the same style as Wind_Bubble_Model.py.
 
-    Uses VegasAfterglow's flux_density_grid(times, freqs) just like in
-    Wind_Bubble_Model.py.  Each chosen epoch gets one model spectrum.
+    - Frequency grid: 1e5 to 1e22 Hz.
+    - Flux density in Jy (erg s^-1 cm^-2 Hz^-1 × 1e23).
+    - Vertical lines marking "bands" at 1e9, 1e14, 1e17 Hz.
+    - Data near each epoch overplotted in the same color.
     """
-    epochs = pick_epochs(t, 3)
+    # Choose a few representative epochs from the data
+    epochs = pick_epochs(t, 4)  # 3–5 is usually nice
     if not epochs:
         print("[plot_spectra] No valid epochs found; skipping.")
         return
 
-    # Data-based frequency range
-    nu_min_data = float(np.nanmin(nu))
-    nu_max_data = float(np.nanmax(nu))
-    nu_min = float(100E6)
-    nu_max = float(1E18)
-    print("Min and max nu = ", nu_min_data, nu_max_data)
+    epochs_arr = np.asarray(epochs, float)
 
-    # Frequency grid for spectra
-    nu_grid = np.logspace(
-        np.log10(nu_min * 0.8),
-        np.log10(nu_max * 1.2),
-        300,
-    )
+    # Fixed frequency grid from radio through X-ray, like Wind_Bubble_Model.py
+    frequencies = np.logspace(5, 22, 300)    # Hz
 
-    epochs_arr = np.array(epochs, float)
+    # Call flux_density_grid in the same way as Wind_Bubble_Model.py
+    try:
+        spec_grid = model.flux_density_grid(epochs_arr, frequencies)
+    except Exception as err:
+        print(f"[plot_spectra] flux_density_grid failed: {err}")
+        return
 
-    # One call to flux_density_grid for all epochs
-    spec_grid = model.flux_density_grid(epochs_arr, nu_grid)
-    A = np.asarray(spec_grid.total)
+    A = np.asarray(spec_grid.total, float)
     A = np.squeeze(A)
 
-    n_nu = nu_grid.size
+    n_nu = frequencies.size
     n_t  = epochs_arr.size
 
-    # We expect shape (Nfreq, Nepochs)
+    # We expect shape (Nfreq, Nepochs), but be forgiving
     if A.ndim == 1:
         if A.size == n_nu and n_t == 1:
             A = A.reshape(n_nu, 1)
@@ -695,33 +860,68 @@ def plot_spectra(model, t, nu, f, e, outpath):
     else:
         raise ValueError(f"[plot_spectra] unexpected ndim={A.ndim} for total")
 
-    plt.figure()
+    plt.figure(figsize=(5.5, 3.8), dpi=200)
+
+    # Color for each epoch
+    colors = plt.cm.plasma(np.linspace(0.0, 1.0, n_t))
+
+    # Band markers (same as Wind_Bubble_Model.py)
+    bands = np.array([1e9, 1e14, 1e17])   # Hz (radio, optical, X-ray)
+    for k, nu_b in enumerate(bands):
+        plt.axvline(nu_b, ls="--", color=f"C{k}", alpha=0.6)
+
+    # Plot spectra for each epoch
     for j, tj in enumerate(epochs_arr):
-        y = np.asarray(A[:, j], float)
-        m_mod = np.isfinite(y) & (y > 0.0)
+        y_cgs = np.asarray(A[:, j], float)
+        m_mod = np.isfinite(y_cgs) & (y_cgs > 0.0)
         if not np.any(m_mod):
             print(f"[plot_spectra] Epoch t={tj:.3g} s has no positive model flux; skipping.")
             continue
 
-        (line,) = plt.loglog(nu_grid[m_mod], y[m_mod],
-                             lw=1.8, label=f"t = {tj:.3g} s")
+        # Convert to Jy
+        y_jy = y_cgs[m_mod] * 1e23
+
+        # Nice LaTeX label for the epoch time
+        exp = int(np.floor(np.log10(tj)))
+        base = tj / 10.0**exp
+        if np.isclose(base, 1.0):
+            epoch_label = rf"$10^{{{exp}}}\,\mathrm{{s}}$"
+        else:
+            epoch_label = rf"${base:.1f}\times10^{{{exp}}}\,\mathrm{{s}}$"
+
+        (line,) = plt.loglog(
+            frequencies[m_mod],
+            y_jy,
+            lw=1.8,
+            color=colors[j],
+            label=epoch_label,
+        )
         col = line.get_color()
 
-        # Data within ~20% in time, same color
+        # Overplot data within ~20 percent in time, in the same color (also in Jy)
         m_data = (t > tj / 1.2) & (t < tj * 1.2)
         m_data &= np.isfinite(f) & np.isfinite(e) & (e > 0.0)
         if np.any(m_data):
             plt.errorbar(
-                nu[m_data], f[m_data], yerr=e[m_data],
-                fmt="o", ms=4, capsize=2,
-                color=col, ecolor=col, markeredgecolor=col,
+                nu[m_data],
+                f[m_data] * 1e23,
+                yerr=e[m_data] * 1e23,
+                fmt="o",
+                ms=4,
+                capsize=2,
+                color=col,
+                ecolor=col,
+                markeredgecolor=col,
                 linestyle="none",
             )
 
     plt.xlabel("Frequency [Hz]")
-    plt.ylabel("Flux density [erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$]")
+    plt.ylabel("Flux density [Jy]")
+    plt.title(f"GRB {GRB_NAME} synchrotron spectra at multiple epochs")
+
     handles, labels = plt.gca().get_legend_handles_labels()
     if labels:
+        # Keep legend readable even with several epochs
         plt.legend(loc="best", fontsize=8)
 
     os.makedirs(os.path.dirname(outpath), exist_ok=True)
@@ -730,6 +930,7 @@ def plot_spectra(model, t, nu, f, e, outpath):
     print(f"[plot_spectra] Saved plot to {outpath}")
     plt.show()
     plt.close()
+
 
 def print_parameters(theta, names=PARAM_NAMES, header="Parameters"):
     """
@@ -1028,8 +1229,8 @@ def main():
     print(csv_path)
     npz_filename = os.path.join(data_dir, GRB_NAME + "_fit_results.npz")
     print(npz_filename)
-    state_filename = os.path.join(data_dir, GRB_NAME + "_emcee_state.pkl")
-    print(state_filename)
+    resume_file = data_dir + "/" + GRB_NAME + "_resume.pkl"
+    print(resume_file)
 
     # ------------------------------------------------------------------------------
 
@@ -1075,9 +1276,6 @@ def main():
 
         print_toml_like(fit_data)
 
-
-    resume_file = data_dir + "/" + GRB_NAME + "_resume.pkl"
-
     if os.path.exists(resume_file):
         try:
             resume_data = pickle.load(open(resume_file, "rb"))
@@ -1114,11 +1312,7 @@ def main():
     )
 
     if PLOT_ONLY:
-        print("\nReading file " + npz_filename + "  -- not fitting data because PLOT_ONLY is True")
-        data = np.load(npz_filename)
-        best = data["best"]  # (ndim,)
-        chain = data["chain"]  # (nwalkers, nsteps, ndim)
-        lnps = data["lnps"]  # (nwalkers, nsteps)
+        best, chain, lnps, state = theta0, chain0, lnps0, state0
 
     else:
         print("\nRunning emcee.")
@@ -1136,7 +1330,6 @@ def main():
         )
         print("\nDone running emcee. -- PLOT_ONLY is False")
 
-        resume_file = os.path.join(data_dir, GRB_NAME + "_resume.pkl")
         resume_data = {
             "state": state,
             "chain": chain,
@@ -1149,29 +1342,41 @@ def main():
         }
         pickle.dump(resume_data, open(resume_file, "wb"))
 
-        print("Writing emcee state into file " + state_filename + ".")
-        with open(state_filename, "wb") as f:
-            pickle.dump(state, f)
-
         print("\nBest-fit parameters (max posterior):")
         print_parameters(best, names=PARAM_NAMES, header="Best-fit parameters (max posterior)")
         # --------------------------------
 
-        # ---------- Save results before plotting ----------
-        out_path = data_dir+"/"+GRB_NAME+"_fit_results.toml"
-        save_results_toml(out_path, best, chain, bounds_map, normal_map, cfg)
-        print(f"Saved priors/results to: {out_path}")
-        # -------------------------------------------------
-
+    # ---------- Save results before plotting ----------
+    out_path = data_dir+"/"+GRB_NAME+"_fit_results.toml"
+    save_results_toml(out_path, best, chain, bounds_map, normal_map, cfg)
+    print(f"Saved priors/results to: {out_path}")
+    # -------------------------------------------------
 
     # ---------- Best-fit plots ----------
     model_best = build_model(best, cfg)
+
+    plot_density_profile(
+        model_best,
+        best,
+        cfg,
+        os.path.join(data_dir, "density_profile.png"),
+    )
+
+    plot_spectra(
+        model_best, tb, nub, fb, eb,
+        os.path.join(data_dir, "spectra_speed.png")
+    )
 
     plot_lightcurves(
         model_best, tb, nub, fb, eb,
         os.path.join(data_dir, "lightcurves_speed.png"), cfg
     )
 
+## -----  Actual Main Program --------
 if __name__=="__main__":
-    try: main()
-    except KeyboardInterrupt: sys.exit(130)
+    if RUN_ALL_GRBS:
+        for GRB_NAME in GRB_NAMES:
+            print("\nRunning GRB:", GRB_NAME)
+            main()
+    else:
+        main()

@@ -43,6 +43,12 @@ nwalkers = 64
 burn = 1000
 nsteps = 3000
 num_nu_grid = 32
+
+
+
+
+
+
 #  ------------------------------------------------------------------
 
 def rho(phi, theta, r):
@@ -51,7 +57,7 @@ def rho(phi, theta, r):
     Very simple shell assuming it is mixed
     """
     # Parameters to be fit
-    global R_t, n_t, n_ism
+    global R_t, n_t, n_ism, meta
     n_sh = max(4 * n_t, 4 * n_ism)  ## strong shock factor of 4 in density & guarantees n_sh > n_ism
     # region boundary
     # R1 would be R_t   R2 us outside of shell
@@ -78,11 +84,9 @@ def rho(phi, theta, r):
     rho_sh = n_sh * m_mol
     rho_ism = n_ism * m_mol
 
-    if debug:
-        meta = {"R_sh": 0.5 * (R2 - R_t), "dR": R2 - R_t, "n_t": n_t,
-                "rho_t": rho_t, "n_shell": n_sh,
-                "rho_shell": rho_sh, "n_ism": n_ism, "rho_ism": rho_ism}
-        print(meta)
+    meta = {"R_sh": 0.5 * (R2 - R_t), "dR": R2 - R_t, "n_t": n_t,
+            "rho_t": rho_t, "n_shell": n_sh,
+            "rho_shell": rho_sh, "n_ism": n_ism, "rho_ism": rho_ism}
 
     # free wind
     if r < R_t:
@@ -157,7 +161,6 @@ plt.tight_layout()
 plt.savefig("assets/density_profile.png", dpi=300)
 plt.show()
 
-
 # ---------- light curves (multi-band) ----------
 # ---------- combined multi-band light curves with dual x- and y-axes ----------
 times = np.logspace(2, 8, 200)           # seconds
@@ -179,7 +182,7 @@ for j, (name, nu) in enumerate(zip(band_names, bands)):
         if model_names[k] == "Simple Bubble":
             alpha = 0.75
         else:
-            alpha
+            alpha = 0.25
         ax1.loglog(times, lc.total[j, :] * 1e23,
                    color=f'C{3*j+k}', lw=1.6, label=label, alpha=alpha)
         i = i+1
@@ -247,3 +250,7 @@ plt.legend(ncol=len(epochs), fontsize=(3*7/len(epochs)), loc='lower center')
 plt.tight_layout()
 plt.savefig('assets/spectra_all_epochs.png', dpi=300)
 plt.show()
+
+if debug:
+    print(meta)
+
